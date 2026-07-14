@@ -13,7 +13,7 @@ OUTPUT_DIR.mkdir(exist_ok=True)
 def validate_ip(ip: str) -> str:
     return str(ipaddress.ip_address(ip))
 
-def run_nmap(ip: str, base_name) -> tuple[int, str, str]:
+def run_nmap(ip: str, base_name:str) -> tuple[int, str, str, str]:
     xml_path = OUTPUT_DIR / f"{base_name}.xml"
     txt_path = OUTPUT_DIR / f"{base_name}.txt"
     
@@ -30,7 +30,8 @@ def run_nmap(ip: str, base_name) -> tuple[int, str, str]:
 
     result = subprocess.run(
         cmd,
-        capture_output=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
         text=True,
         check=False
     )
@@ -44,8 +45,8 @@ def main():
     args = parser.parse_args()
 
     ip = validate_ip(args.ip)
-    time = datetime.now().strftime("%Y%m%d_%H%M%S")
-    base_name = f"nmap_{ip}_{time}"
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    base_name = f"nmap_{ip}_{ts}"
 
     code, xml_file, txt_file, err_msg = run_nmap(ip, base_name)
 
