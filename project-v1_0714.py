@@ -61,7 +61,9 @@ def main():
     else:
         print(f"TXT NOT created (expected at: {txt_file})")
 
-    # print(f"Saved to: {saved_file}")
+    if err_msg.strip():
+        print("---- stderr ----")
+        print(err_msg.strip())
 
 if __name__ == "__main__":
     main()
