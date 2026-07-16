@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
 """
 測試腳本：不執行 nmap，直接對 output/ 資料夾裡「既有的」xml/txt/log 檔案
-跑 scanner.py 裡跟解析/印出相關的函式，快速驗證邏輯是否正確。
+跑 project.py 裡跟解析/印出相關的函式，快速驗證邏輯是否正確。
 
 用法：
-    python3 test_scanner.py                  # 自動抓 output/ 裡最新一組檔案
-    python3 test_scanner.py nmap_192.168.1.1_20260716_153000  # 指定 base_name
+    python3 test.py                  # 自動抓 output/ 裡最新一組檔案
+    python3 test.py nmap_192.168.1.1_20260716_153000  # 指定 base_name
 """
 import sys
 from pathlib import Path
 
-# 直接重用 scanner.py 裡已經寫好的函式，不用複製貼上重寫一份
-from scanner import (
+# 直接重用 project.py 裡已經寫好的函式，不用複製貼上重寫一份
+from project import (
     OUTPUT_DIR,
     print_file_status,
     handle_xml_findings,
