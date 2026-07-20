@@ -115,11 +115,7 @@ def parse_zap_alerts(alerts: list[dict]) -> list[dict]:
     return results
  
  
-def run_scan(
-    url: str,
-    zap_api_url: str = DEFAULT_ZAP_API_URL,
-    active_scan: bool = True,
-) -> list[dict]:
+def run_scan(url: str, zap_api_url: str = DEFAULT_ZAP_API_URL, active_scan: bool = True,) -> list[dict]:
     """
     完整跑一次 ZAP 掃描並回傳統一格式的 findings。
     設計理由跟 nmap_scan.run_scan / firmware_scan.run_scan 一致：
