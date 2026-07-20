@@ -24,7 +24,7 @@ def run_network_scan(ip: str) -> list[dict]:
 
 def run_firmware_scan(firmware_path: str) -> list[dict]:
     try:
-        return firmware_scan.run_scan(firmware_path)
+        return fw_scan.run_scan(firmware_path)
     except FileNotFoundError as e:
         print(f"[firmware] Error: {e}")
     return []
