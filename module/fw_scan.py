@@ -30,7 +30,7 @@ def check_binwalk_installed():
     if shutil.which("binwalk") is None:
         raise FileNotFoundError(
             "binwalk not found in PATH "
-            "(若用 pip 裝過殼套件，請改用系統套件管理員安裝，如 apt-get install binwalk)"
+            "系統套件管理員安裝，sudo apt-get install binwalk)"
         )
  
  
@@ -45,10 +45,6 @@ def run_binwalk(firmware_path: Path, base_name: str) -> tuple[int, str, str]:
     txt_path = OUTPUT_DIR / f"{base_name}.txt"
     log_path = OUTPUT_DIR / f"{base_name}.log"
  
-    # 只做訊號掃描（signature scan），不加 -e 做實際解壓縮。
-    # 解壓縮會把韌體內容整批寫到磁碟，對「先盤點裡面有什麼」這個
-    # 目的來說不是必要動作，之後如果要深入分析特定區塊，
-    # 再針對那個 offset 另外跑 -e 會更可控。
     cmd = ["binwalk", str(firmware_path)]
  
     result = subprocess.run(
@@ -59,8 +55,6 @@ def run_binwalk(firmware_path: Path, base_name: str) -> tuple[int, str, str]:
         check=False
     )
  
-    # binwalk 的訊號表格是印在 stdout，這裡直接落地成 .txt，
-    # 跟 nmap 模組用 -oN 讓工具自己寫檔的精神一致：保留原始輸出。
     txt_path.write_text(result.stdout, encoding="utf-8")
  
     log_content = []
@@ -79,25 +73,25 @@ def parse_binwalk_output(raw_text: str, target: str) -> list[dict]:
     for line in raw_text.splitlines():
         match = BINWALK_LINE_PATTERN.match(line.strip())
         if not match:
-            continue  # 跳過表頭、分隔線等不是資料列的內容
+            continue 
  
         offset_decimal, offset_hex, description = match.groups()
         description = description.strip()
  
-        # 出現私鑰、密碼檔、檔案系統這類訊號，代表真的有實質風險，
-        # 不是「等等再看」的程度，所以直接給 high，而不是額外的
-        # review 標記——跟 zap 的風險分級用同一套四級制，方便合併排序。
-        severity = "high" if any(k in description.lower() for k in SENSITIVE_KEYWORDS) else "info"
+        matched_keyword = next(
+            (k for k in SENSITIVE_KEYWORDS if k in description.lower()), None
+        )
  
         results.append(make_finding(
             category="firmware",
             source="binwalk",
             target=target,
-            severity=severity,
+            severity="info",
             title=description,
             detail={
                 "offset_decimal": int(offset_decimal),
                 "offset_hex": offset_hex,
+                "matched_keyword": matched_keyword,
             },
         ))
  
@@ -105,11 +99,6 @@ def parse_binwalk_output(raw_text: str, target: str) -> list[dict]:
  
  
 def run_scan(firmware_path: str) -> list[dict]:
-    """
-    完整跑一次 binwalk 訊號掃描並回傳統一格式的 findings。
-    設計理由跟 nmap_scan.run_scan 一致：失敗時直接丟出例外，
-    讓呼叫端（CLI 的 main() 或 orchestrator）自行決定如何處理。
-    """
     check_binwalk_installed()
     path = check_firmware_file(firmware_path)
  
