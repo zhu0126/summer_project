@@ -136,7 +136,7 @@ def run_scan(ip: str) -> list[dict]:
     return findings
 
 def main():
-    parser = argparse.ArgumentParser(description="Simple IoT initial scanner")
+    parser = argparse.ArgumentParser(description="Simple IoT network scanner")
     parser.add_argument("ip", help="Target IP address")
     args = parser.parse_args()
 
