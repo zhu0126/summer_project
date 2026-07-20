@@ -15,10 +15,8 @@ except ImportError:
  
 DEFAULT_ZAP_API_URL = "http://127.0.0.1:8080"
  
- 
+# ZAP daemon 例外觸發
 class ZapConnectionError(Exception):
-    """ZAP daemon 連不上時丟出，跟 requests/zapv2 底層各種例外型別隔開，
-    讓呼叫端只需要認得這一種例外就能判斷『是連線問題』。"""
     pass
  
 # ZAP 的 risk 分級直接對應到我們的 severity 欄位，統一轉小寫跟其他模組一致。
@@ -33,8 +31,8 @@ RISK_TO_SEVERITY = {
 def check_zapv2_installed():
     if ZAPv2 is None:
         raise ImportError(
-            "python-owasp-zap-v2.4 not installed. "
-            "Run: pip install python-owasp-zap-v2.4"
+            "zaproxy (Python client) not installed. "
+            "Run: pip install zaproxy"
         )
  
  
