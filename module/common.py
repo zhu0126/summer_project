@@ -4,24 +4,12 @@ from pathlib import Path
 OUTPUT_DIR = Path("output")
 OUTPUT_DIR.mkdir(exist_ok=True)
  
-# 三個掃描模組（nmap/binwalk/zap）共用同一套 severity 分級與排序，
-# 讓合規判讀層能用同一套邏輯處理不同來源的 finding，不需要為每個
-# source 各寫一套判斷規則。
+# 統一分級順序，方便跨來源排序、篩選。數字越小代表風險越高。 
 SEVERITY_ORDER = {"high": 0, "medium": 1, "low": 2, "info": 3}
  
  
-def make_finding(
-    category: str,
-    source: str,
-    target: str,
-    severity: str,
-    title: str,
-    detail: dict | None = None,
-) -> dict:
+def make_finding(category: str, source: str, target: str, severity: str, title: str, detail: dict | None = None,) -> dict:
     """
-    建立統一格式的 finding。所有掃描模組的 parse_* 函式都應該回傳
-    這個結構組成的 list，而不是各自定義不同的欄位。
- 
     - category / source：標示這筆資料的來源類型
     - target：被檢測的對象（IP、韌體檔名、URL），方便報告依對象分組
     - severity：統一四級 high/medium/low/info，方便跨來源排序、篩選
