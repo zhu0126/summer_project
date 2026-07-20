@@ -2,7 +2,6 @@
 
 import argparse
 import ipaddress
-import json
 import subprocess
 import shutil
 import sys
@@ -11,6 +10,7 @@ import xml.etree.ElementTree as ET
 
 from pathlib import Path
 from datetime import datetime
+
 
 def validate_ip(ip: str) -> str:
     return str(ipaddress.ip_address(ip))
