@@ -3,9 +3,10 @@
 import argparse
 import sys
 
-from datetime import datetime
 
+from datetime import datetime
 from common import save_findings_json, print_findings
+
 
 import nmap_scan
 import fw_scan
