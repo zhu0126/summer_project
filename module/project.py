@@ -5,7 +5,7 @@ import sys
 
 
 from datetime import datetime
-from common import save_findings_json, print_findings
+from common import build_report, save_report_json, print_findings
 
 
 import nmap_scan
@@ -51,6 +51,12 @@ def main():
     parser.add_argument("--ip", help="Target IP for network scan (nmap)")
     parser.add_argument("--firmware", help="Path to firmware file for firmware scan (binwalk)")
     parser.add_argument("--url", help="Target URL for web app scan (ZAP)")
+    parser.add_argument("--project-name", default="IoT Security Assessment",
+                        help="Project name shown in the report JSON")
+    parser.add_argument("--client-name", default="Internal",
+                        help="Client/company name shown in the report JSON")
+    parser.add_argument("--tester", default="Unassigned",
+                        help="Tester name shown in the report JSON")
     parser.add_argument("--zap-api-url", default=zap_scan.DEFAULT_ZAP_API_URL,
                          help=f"ZAP daemon API URL (default: {zap_scan.DEFAULT_ZAP_API_URL})")
     parser.add_argument("--no-active-scan", action="store_true",
@@ -78,10 +84,29 @@ def main():
         print()
 
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    combined_json = save_findings_json(all_findings, f"combined_{ts}")
+    report = build_report(
+        project_name=args.project_name,
+        client_name=args.client_name,
+        tester=args.tester,
+        targets={
+            "ip": args.ip,
+            "firmware": args.firmware,
+            "url": args.url,
+        },
+        scan_options={
+            "nmap": bool(args.ip),
+            "binwalk": bool(args.firmware),
+            "zap": bool(args.url),
+            "zap_api_url": args.zap_api_url if args.url else None,
+            "zap_active_scan": bool(args.url and not args.no_active_scan),
+        },
+        findings=all_findings,
+    )
+    combined_json = save_report_json(report, f"combined_report_{ts}")
 
     print("==== Combined report ====")
-    print(f"Combined JSON saved to: {combined_json}")
+    print(f"Combined report JSON saved to: {combined_json}")
+    print(f"Finding summary: {report['summary']['by_severity']}")
     print_findings(all_findings, empty_message="No findings from any module.")
 
 
