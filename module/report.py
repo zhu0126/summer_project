@@ -75,23 +75,36 @@ def save_report(content: str, base_name: str) -> str:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Generate Markdown compliance report from nmap scan")
-    parser.add_argument("ip", help="Target IP that was scanned")
+    """
+    獨立執行時，report.py 只做「render」這件事：讀一份已經存在的
+    findings json 檔案，加上 scan_metadata，產生報告。
+
+    不在這裡觸發 nmap 掃描——避免跟 project.py（orchestrator）的職責重疊：
+    「要不要掃描、掃哪些目標」是 orchestrator 該決定的事，report.py
+    只負責「拿到 findings 之後怎麼把它變成一份報告」。
+    要一鍵掃描+出報告，請用 project.py --report。
+    """
+    import json
+
+    parser = argparse.ArgumentParser(
+        description="Render a Markdown report from an existing findings json file"
+    )
+    parser.add_argument("findings_json", help="Path to a findings json file (from nmap_scan/firmware_scan/zap_scan/project.py)")
+    parser.add_argument("--scope", required=True, help="Scan scope description, e.g. an IP or CIDR")
     parser.add_argument("--operator", default="unknown", help="Who ran this scan")
     args = parser.parse_args()
 
-    import nmap_scan  # 延遲匯入：report.py 單獨測試（用假資料）時不需要 nmap 環境
-    try:
-        findings = nmap_scan.run_scan(args.ip)
-    except Exception as e:
-        print(f"Error: nmap scan failed ({e})")
+    findings_path = Path(args.findings_json)
+    if not findings_path.is_file():
+        print(f"Error: findings json not found: {findings_path}")
         sys.exit(1)
 
-    scan_metadata = build_scan_metadata(scope=args.ip, operator=args.operator)
+    findings = json.loads(findings_path.read_text(encoding="utf-8"))
+    scan_metadata = build_scan_metadata(scope=args.scope, operator=args.operator)
     content = render_report(findings, scan_metadata)
 
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    base_name = f"report_{args.ip}_{ts}"
+    base_name = f"report_{ts}"
     report_path = save_report(content, base_name)
 
     print(f"Report saved to: {report_path}")
