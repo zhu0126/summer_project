@@ -1,0 +1,49 @@
+# IoT 安全掃描報告
+
+## Scan Information
+
+| 項目 | 內容 |
+|---|---|
+| 掃描時間 | {{ scan_metadata.scan_time }} |
+| 掃描範圍 | {{ scan_metadata.scope }} |
+| 操作者 | {{ scan_metadata.operator }} |
+
+## Findings
+
+{% if merged_findings %}
+| 目標 | 項目 | 狀態 | 風險等級 |
+|---|---|---|---|
+{% for item in merged_findings -%}
+| {{ item.target }} | {{ item.title }} | {{ item.detail.state | default("-") }} | {{ item.risk_level | upper }} |
+{% endfor %}
+{% else %}
+本次掃描沒有發現任何項目。
+{% endif %}
+
+## Risk Level & Recommendation
+
+{% set matched_items = merged_findings | selectattr("status", "equalto", "matched") | list %}
+{% if matched_items %}
+{% for item in matched_items %}
+### [{{ item.risk_level | upper }}] {{ item.title }}（{{ item.target }}）
+
+- **建議**：{{ item.recommendation }}
+- **對應法規**：{{ item.cra_reference }}
+
+{% endfor %}
+{% else %}
+本次掃描沒有比對到需要處理的項目。
+{% endif %}
+
+{% set unmatched_items = merged_findings | selectattr("status", "equalto", "no_match") | list %}
+{% if unmatched_items %}
+## 其他未列入規則比對的項目
+
+{% for item in unmatched_items -%}
+- {{ item.title }}（{{ item.target }}）
+{% endfor %}
+{% endif %}
+
+---
+
+*本報告部分內容由自動化規則比對產生，非正式法律意見，實際合規判定請諮詢專業人員或法務單位複核。*
