@@ -104,6 +104,7 @@ def parse_nmap_xml(xml_file: str) -> list[dict]:
                     "port": port_id,
                     "service": service,
                     "product": product,
+                    "state": state,
                     "version": version,
                 },
             ))
