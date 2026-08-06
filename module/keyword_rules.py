@@ -16,7 +16,7 @@
 CRA 對照僅為佔位範例，不是正式法律意見，之後要換成真正查證過的
 條文內容或串接完整版 RAG 的檢索結果。
 """
-from module.common import SEVERITY_ORDER
+from common import SEVERITY_ORDER
 
 # key：nmap 回報的 service 名稱（小寫）
 # value：風險等級、建議、對應的 CRA 條文參考（佔位文字，待正式版替換）
