@@ -9,7 +9,7 @@ from pathlib import Path
 from urllib.parse import urlparse
  
 from common import OUTPUT_DIR, print_file_status, save_findings_json, make_finding, print_findings
- 
+
 try:
     from zapv2 import ZAPv2
 except ImportError:
