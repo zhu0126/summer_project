@@ -7,7 +7,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
  
-from common import OUTPUT_DIR, print_file_status, save_findings_json, make_finding, print_findings
+from module.common import OUTPUT_DIR, print_file_status, save_findings_json, make_finding, print_findings
  
 # binwalk 輸出裡，出現這些關鍵字的訊號代表實質風險，會標記成 severity="high"。
 SENSITIVE_KEYWORDS = [

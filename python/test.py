@@ -11,7 +11,7 @@ import sys
 from pathlib import Path
 
 # 直接重用 project.py 裡已經寫好的函式，不用複製貼上重寫一份
-from project import (
+from module.project import (
     OUTPUT_DIR,
     print_file_status,
     handle_xml_findings,
