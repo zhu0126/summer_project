@@ -17,7 +17,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 from datetime import datetime
 
-from module.common import OUTPUT_DIR, print_file_status, save_findings_json, make_finding, print_findings
+from common import OUTPUT_DIR, print_file_status, save_findings_json, make_finding, print_findings
 
 
 def validate_ip(ip: str) -> str:
