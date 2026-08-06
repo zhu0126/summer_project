@@ -74,6 +74,19 @@ def save_report(content: str, base_name: str) -> str:
     return str(report_path)
 
 
+def infer_scope(findings: list[dict]) -> str:
+    """
+    沒有手動指定 --scope 時，從 findings 的 target 欄位自動推導。
+    json 檔案本身沒有存「這次掃描的整體範圍」這個後設資訊
+    （只有每筆 finding 各自的 target），用這個函式從資料反推，
+    避免每次獨立執行 report.py 都要手動重打一次範圍描述。
+    """
+    targets = sorted({f["target"] for f in findings if f.get("target")})
+    if not targets:
+        return "unknown"
+    return ", ".join(targets)
+
+
 def main():
     """
     獨立執行時，report.py 只做「render」這件事：讀一份已經存在的
@@ -90,7 +103,8 @@ def main():
         description="Render a Markdown report from an existing findings json file"
     )
     parser.add_argument("findings_json", help="Path to a findings json file (from nmap_scan/firmware_scan/zap_scan/project.py)")
-    parser.add_argument("--scope", required=True, help="Scan scope description, e.g. an IP or CIDR")
+    parser.add_argument("--scope", default=None,
+                         help="Scan scope description. 不給的話會從 findings 的 target 欄位自動推導")
     parser.add_argument("--operator", default="unknown", help="Who ran this scan")
     args = parser.parse_args()
 
@@ -100,7 +114,8 @@ def main():
         sys.exit(1)
 
     findings = json.loads(findings_path.read_text(encoding="utf-8"))
-    scan_metadata = build_scan_metadata(scope=args.scope, operator=args.operator)
+    scope = args.scope if args.scope is not None else infer_scope(findings)
+    scan_metadata = build_scan_metadata(scope=scope, operator=args.operator)
     content = render_report(findings, scan_metadata)
 
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
