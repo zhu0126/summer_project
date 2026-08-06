@@ -1,0 +1,198 @@
+/* ===== 通用報告模板樣式 ===== */
+
+@page {
+    size: A4;
+    margin: 3.4cm 2cm 2.6cm 2cm;
+
+    @top-center {
+        content: element(pageHeader);
+    }
+    @bottom-center {
+        content: element(pageFooter);
+    }
+}
+
+* {
+    box-sizing: border-box;
+}
+
+body {
+    font-family: "Noto Sans CJK TC", "Noto Sans CJK SC", "Noto Sans", sans-serif;
+    color: #232a33;
+    font-size: 10.5pt;
+    line-height: 1.65;
+    margin: 0;
+    padding: 0;
+}
+
+/* ---------- 頁首（每頁重複） ---------- */
+#page-header {
+    position: running(pageHeader);
+}
+.report-header {
+    width: 17cm; /* = A4 寬度 21cm 減去左右邊界各 2cm，需與 @page margin 對應 */
+    text-align: center;
+    border-bottom: 1.5pt solid #163a5c;
+    padding-bottom: 5pt;
+    font-size: 8.5pt;
+    color: #5a6b7a;
+}
+.report-header .header-title {
+    font-weight: 700;
+    color: #163a5c;
+    font-size: 9.5pt;
+}
+.report-header .header-org::before {
+    content: "  ·  ";
+    color: #9aa8b5;
+}
+
+/* ---------- 頁尾（每頁重複） ---------- */
+#page-footer {
+    position: running(pageFooter);
+}
+.report-footer {
+    width: 17cm;
+    text-align: center;
+    font-size: 8pt;
+    color: #93a0ad;
+    border-top: 0.75pt solid #dde3e9;
+    padding-top: 4pt;
+}
+.report-footer .page-num::after {
+    content: "第 " counter(page) " 頁，共 " counter(pages) " 頁";
+}
+
+/* ---------- 封面標題區塊（首頁頂端） ---------- */
+.cover-title-block {
+    margin-bottom: 20pt;
+    padding: 14pt 16pt;
+    background: #163a5c;
+    border-radius: 4pt;
+    color: #ffffff;
+}
+.cover-title-block h1 {
+    font-size: 20pt;
+    margin: 0 0 6pt 0;
+    color: #ffffff;
+    font-weight: 700;
+}
+.cover-meta {
+    font-size: 9pt;
+    color: #cfdae6;
+}
+.cover-meta span + span::before {
+    content: "  ·  ";
+    color: #7f97ad;
+}
+
+/* ---------- 內文標題 ---------- */
+h2 {
+    font-size: 13pt;
+    color: #163a5c;
+    border-left: 4pt solid #2f7fb8;
+    padding-left: 8pt;
+    margin-top: 20pt;
+    margin-bottom: 8pt;
+    page-break-after: avoid;
+}
+h3 {
+    font-size: 11pt;
+    color: #24507a;
+    margin-top: 14pt;
+    margin-bottom: 6pt;
+    page-break-after: avoid;
+}
+p {
+    margin: 4pt 0 10pt 0;
+    text-align: justify;
+}
+
+/* ---------- 表格 ---------- */
+table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 6pt 0 16pt 0;
+    font-size: 9.5pt;
+    page-break-inside: auto;
+}
+thead {
+    display: table-header-group; /* 跨頁時重複表頭 */
+}
+tr {
+    page-break-inside: avoid;
+}
+th {
+    background: #163a5c;
+    color: #ffffff;
+    text-align: left;
+    padding: 6pt 8pt;
+    font-weight: 700;
+}
+td {
+    padding: 6pt 8pt;
+    border-bottom: 0.75pt solid #e3e8ed;
+    vertical-align: top;
+}
+tbody tr:nth-child(even) td {
+    background: #f4f7fa;
+}
+
+/* ---------- 風險等級標籤 ---------- */
+.badge {
+    display: inline-block;
+    padding: 2pt 8pt;
+    border-radius: 3pt;
+    font-size: 8.5pt;
+    font-weight: 700;
+    color: #ffffff;
+    letter-spacing: 0.3pt;
+}
+.risk-critical { background: #a3241d; }
+.risk-high     { background: #d9534f; }
+.risk-medium,
+.risk-med      { background: #dd9a1f; }
+.risk-low      { background: #4c8f5c; }
+.risk-info     { background: #5a7ea3; }
+
+/* ---------- 清單 ---------- */
+ul, ol {
+    margin: 4pt 0 12pt 20pt;
+    padding: 0;
+}
+li {
+    margin-bottom: 4pt;
+}
+
+/* ---------- 分隔線 ---------- */
+hr {
+    border: none;
+    border-top: 0.75pt solid #dde3e9;
+    margin: 18pt 0;
+}
+
+/* ---------- 附註 / 免責聲明（Markdown 中的斜體段落） ---------- */
+.report-body > p:last-of-type em,
+.report-body > p em:only-child {
+    display: block;
+    font-size: 8.5pt;
+    color: #7c8896;
+    font-style: normal;
+    background: #f4f7fa;
+    border-left: 3pt solid #b8c4d0;
+    padding: 8pt 10pt;
+}
+
+code, pre {
+    font-family: "Noto Sans Mono CJK TC", monospace;
+    background: #f2f4f7;
+    border-radius: 3pt;
+    font-size: 9pt;
+}
+code {
+    padding: 1pt 4pt;
+}
+pre {
+    padding: 8pt;
+    overflow-x: auto;
+}
