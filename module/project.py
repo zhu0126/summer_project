@@ -17,12 +17,12 @@ import sys
 
 from datetime import datetime
 
-from module.common import save_findings_json, print_findings
+from common import save_findings_json, print_findings
 
-import module.nmap_scan as nmap_scan
-import module.firmware_scan as firmware_scan
-import module.zap_scan as zap_scan
-import module.report as report
+import nmap_scan as nmap_scan
+import firmware_scan as firmware_scan
+import zap_scan as zap_scan
+import report as report
 
 
 def run_network_scan(ip: str) -> list[dict]:
