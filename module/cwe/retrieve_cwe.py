@@ -13,7 +13,7 @@ try:
     from .build_cwe_index import COLLECTION_NAME, EMBEDDING_MODEL, QDRANT_HOST, QDRANT_PORT
 except ImportError:
     # 攤平在同一層的情況，用一般匯入
-    from build_cwe_index import COLLECTION_NAME, EMBEDDING_MODEL, QDRANT_HOST, QDRANT_PORT
+    from module.cwe.build_cwe_index import COLLECTION_NAME, EMBEDDING_MODEL, QDRANT_HOST, QDRANT_PORT
 
 from fastembed import TextEmbedding
 from qdrant_client import QdrantClient
