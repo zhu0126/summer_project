@@ -16,7 +16,7 @@ from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader
 
-from common import OUTPUT_DIR
+from common import get_output_dir
 from analysis import analyze_findings
 
 TEMPLATE_DIR = Path(__file__).parent / "templates"
@@ -69,7 +69,7 @@ def render_report(findings: list[dict], scan_metadata: dict) -> str:
 
 
 def save_report(content: str, base_name: str) -> str:
-    report_path = OUTPUT_DIR / f"{base_name}.md"
+    report_path = get_output_dir() / f"{base_name}.md"
     report_path.write_text(content, encoding="utf-8")
     return str(report_path)
 
