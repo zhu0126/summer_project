@@ -16,13 +16,24 @@ import argparse
 import sys
 
 from datetime import datetime
+from pathlib import Path
 
-from common import save_findings_json, print_findings
+from common import save_findings_json, print_findings, set_output_dir, get_output_dir
 
-import nmap_scan as nmap_scan
-import firmware_scan as firmware_scan
-import zap_scan as zap_scan
-import report as report
+import nmap_scan
+import firmware_scan
+import zap_scan
+import report
+
+try:
+    # md_to_pdf 是子資料夾（package）的情況
+    from md_to_pdf.md_to_pdf import convert as convert_md_to_pdf
+except ImportError:
+    try:
+        # md_to_pdf.py 跟其他模組攤平在同一層的情況
+        from md_to_pdf import convert as convert_md_to_pdf
+    except ImportError:
+        convert_md_to_pdf = None
 
 
 def run_network_scan(ip: str) -> list[dict]:
@@ -78,10 +89,26 @@ def main():
                          help="掃描完成後一併產生 Markdown 合規報告")
     parser.add_argument("--operator", default="unknown",
                          help="操作者名稱，寫入報告的 Scan Information（搭配 --report 使用）")
+    parser.add_argument("--pdf", action="store_true",
+                         help="在 Markdown 報告之外，另外產生 PDF 版本（需搭配 --report）")
+    parser.add_argument("--org", default="",
+                         help="單位/系統名稱，顯示於 PDF 頁首頁尾（搭配 --pdf 使用）")
+    parser.add_argument("--title", default=None,
+                         help="PDF 報告標題，預設取自報告內文第一個標題（搭配 --pdf 使用）")
     args = parser.parse_args()
 
     if not (args.ip or args.firmware or args.url):
         parser.error("至少要提供 --ip、--firmware、--url 其中一個目標")
+
+    # 在任何模組開始寫檔之前，先建立本次執行專屬的資料夾，並切換
+    # common.get_output_dir()，讓 nmap_scan/firmware_scan/zap_scan/report
+    # 這些模組接下來呼叫 get_output_dir() 拿到的都是這個新路徑——
+    # 不需要逐一傳參數給每個模組，因為它們都是在「呼叫的當下」才去
+    # 讀取路徑，而不是在 import 當下就把路徑寫死。
+    run_ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    run_dir = set_output_dir(Path("output") / run_ts)
+    print(f"本次執行輸出資料夾：{run_dir}")
+    print()
 
     all_findings: list[dict] = []
 
@@ -100,8 +127,7 @@ def main():
         all_findings += run_webapp_scan(args.url, args.zap_api_url, not args.no_active_scan, args.zap_auto_start)
         print()
 
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    combined_json = save_findings_json(all_findings, f"combined_{ts}")
+    combined_json = save_findings_json(all_findings, f"combined_{run_ts}")
 
     print("==== Combined report ====")
     print(f"Combined JSON saved to: {combined_json}")
@@ -122,12 +148,26 @@ def main():
         scan_metadata = report.build_scan_metadata(scope=scope, operator=args.operator)
         content = report.render_report(all_findings, scan_metadata)
         # 沿用跟 combined json 相同的時間戳記，方便從報告回溯到是哪次
-        # orchestrator 執行產生的（跟 combined_{ts}.json 對應）
-        report_path = report.save_report(content, f"report_{ts}")
+        # orchestrator 執行產生的（跟 combined_{run_ts}.json 對應）
+        report_path = report.save_report(content, f"report_{run_ts}")
 
         print()
         print("==== Report ====")
         print(f"Report saved to: {report_path}")
+
+        if args.pdf:
+            # PDF 轉換失敗不該讓已經產出的 Markdown 報告白費，
+            # 只印警告並跳過，跟其他選用依賴（ZAP daemon、CWE 知識庫）
+            # 一致的優雅降級原則。
+            if convert_md_to_pdf is None:
+                print("[pdf] Error: md_to_pdf 模組無法載入，略過 PDF 產生。")
+                print("[pdf] 請確認 md_to_pdf/ 資料夾存在，且已安裝 markdown/beautifulsoup4/weasyprint。")
+            else:
+                pdf_path = report_path.replace(".md", ".pdf")
+                try:
+                    convert_md_to_pdf(report_path, pdf_path, title=args.title, org=args.org)
+                except Exception as e:
+                    print(f"[pdf] Error: PDF 轉換失敗（{e}），Markdown 報告仍可正常使用。")
 
 
 if __name__ == "__main__":
