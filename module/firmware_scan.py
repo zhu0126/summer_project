@@ -1,3 +1,7 @@
+"""
+提供 run_scan() 給 project.py
+（orchestrator）呼叫、串接使用。
+"""
 import argparse
 import re
 import shutil
