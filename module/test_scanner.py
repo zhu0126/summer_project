@@ -1,28 +1,28 @@
 #!/usr/bin/env python3
 """
 測試腳本：不執行 nmap，直接對 output/ 資料夾裡「既有的」xml/txt/log 檔案
-跑 project.py 裡跟解析/印出相關的函式，快速驗證邏輯是否正確。
+跑 nmap_scan.py 裡跟解析相關的函式，快速驗證邏輯是否正確。
 
 用法：
-    python3 test.py                  # 自動抓 output/ 裡最新一組檔案
-    python3 test.py nmap_192.168.1.1_20260716_153000  # 指定 base_name
+    python3 test_scanner.py                  # 自動抓 output/ 裡最新一組檔案
+    python3 test_scanner.py nmap_192.168.1.1_20260716_153000  # 指定 base_name
 """
 import sys
 from pathlib import Path
 
-# 直接重用 project.py 裡已經寫好的函式，不用複製貼上重寫一份
-from module.project import (
-    OUTPUT_DIR,
-    print_file_status,
-    handle_xml_findings,
-)
+# get_output_dir/print_file_status/save_findings_json/print_findings 是三個掃描
+# 模組共用的邏輯，統一放在 common.py；parse_nmap_xml 是 nmap 特有的解析邏輯，
+# 放在 nmap_scan.py。故意不呼叫 nmap_scan.run_scan()，因為那個函式會重新執行
+# 一次 nmap，不符合這支測試腳本「不重跑 nmap，只驗證既有檔案」的目的。
+from common import get_output_dir, print_file_status, save_findings_json, print_findings
+from nmap_scan import parse_nmap_xml
 
 
 def find_latest_base_name() -> str:
     """從 output/ 資料夾裡找最新的一組 nmap_*.xml，回傳去掉副檔名的 base_name"""
-    xml_files = sorted(OUTPUT_DIR.glob("nmap_*.xml"))
+    xml_files = sorted(get_output_dir().glob("nmap_*.xml"))
     if not xml_files:
-        print(f"Error: 在 {OUTPUT_DIR} 裡找不到任何 nmap_*.xml 檔案。")
+        print(f"Error: 在 {get_output_dir()} 裡找不到任何 nmap_*.xml 檔案。")
         print("請確認 output/ 資料夾底下有先前執行留下的檔案，")
         print("或手動指定 base_name，例如：python3 test_scanner.py nmap_192.168.1.1_20260716_153000")
         sys.exit(1)
@@ -37,9 +37,9 @@ def main():
     else:
         base_name = find_latest_base_name()
 
-    xml_file = str(OUTPUT_DIR / f"{base_name}.xml")
-    txt_file = str(OUTPUT_DIR / f"{base_name}.txt")
-    log_file = str(OUTPUT_DIR / f"{base_name}.log")
+    xml_file = str(get_output_dir() / f"{base_name}.xml")
+    txt_file = str(get_output_dir() / f"{base_name}.txt")
+    log_file = str(get_output_dir() / f"{base_name}.log")
 
     print(f"Testing with base_name: {base_name}")
     print("=" * 50)
@@ -51,12 +51,15 @@ def main():
 
     print("-" * 50)
 
-    # 2. 測試 handle_xml_findings：解析 XML → 存 JSON → 印出開放連接埠摘要
+    # 2. 測試解析流程：解析 XML → 存 JSON → 印出摘要
     #    這一步不需要 nmap，只需要既有的 .xml 檔案就能測試
     if Path(xml_file).exists():
-        handle_xml_findings(xml_file, base_name)
+        findings = parse_nmap_xml(xml_file)
+        json_file = save_findings_json(findings, base_name)
+        print_file_status("JSON", json_file)
+        print_findings(findings, empty_message="No open ports found in XML.")
     else:
-        print(f"Skip: {xml_file} 不存在，無法測試 handle_xml_findings")
+        print(f"Skip: {xml_file} 不存在，無法測試解析流程")
 
 
 if __name__ == "__main__":
