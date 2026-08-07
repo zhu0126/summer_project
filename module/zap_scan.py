@@ -188,10 +188,6 @@ def run_scan(
     auto_start: bool = False,
 ) -> list[dict]:
     """
-    完整跑一次 ZAP 掃描並回傳統一格式的 findings。
-    設計理由跟 nmap_scan.run_scan / firmware_scan.run_scan 一致：
-    失敗時丟出例外，交給呼叫端（CLI 的 main() 或 orchestrator）處理。
- 
     auto_start=False（預設）：daemon 沒開就直接失敗，適合你會連續測試
     多個目標、想自己控制 daemon 什麼時候開/關的情境，效率最高。
  
