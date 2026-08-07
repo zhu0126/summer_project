@@ -17,7 +17,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 from datetime import datetime
 
-from common import OUTPUT_DIR, print_file_status, save_findings_json, make_finding, print_findings
+from common import get_output_dir, print_file_status, save_findings_json, make_finding, print_findings
 
 
 def validate_ip(ip: str) -> str:
@@ -30,9 +30,9 @@ def check_nmap_installed():
 
 
 def run_nmap(ip: str, base_name: str) -> tuple[int, str, str, str]:
-    xml_path = OUTPUT_DIR / f"{base_name}.xml"
-    txt_path = OUTPUT_DIR / f"{base_name}.txt"
-    log_path = OUTPUT_DIR / f"{base_name}.log"
+    xml_path = get_output_dir() / f"{base_name}.xml"
+    txt_path = get_output_dir() / f"{base_name}.txt"
+    log_path = get_output_dir() / f"{base_name}.log"
 
     # 用 list 組合每個參數，而不是把整個指令拼成一串字串（例如 f"nmap -sV ... {ip}"）。
     # 因為 subprocess.run 傳入 list 時不會經過 shell 解析，每個元素都被當成獨立的
