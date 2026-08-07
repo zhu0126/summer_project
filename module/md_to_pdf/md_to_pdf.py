@@ -7,15 +7,25 @@
 模板位置（與本檔案同資料夾）:
     style.css   - 版面樣式（可自由調整顏色、字型、頁首頁尾）
     page.html   - HTML 外框（{title}/{org}/{generated_at}/{body} 為佔位符）
+
+匯入防護說明：
+markdown/bs4/weasyprint 都用 try/except 包住，讓「import 這個模組」這件事
+本身不會因為 weasyprint 沒裝好（尤其它需要系統層級的 Pango/Cairo 函式庫，
+不是單純 pip install 就一定成功）而失敗。project.py 會在最上層直接
+import 這個模組，如果沒有這層防護，其他人只要沒裝好 weasyprint，
+連 --ip 這種完全用不到 PDF 功能的掃描都會被拖累而跑不動。
 """
 import argparse
 import datetime
-import re
 from pathlib import Path
 
-import markdown as md
-from bs4 import BeautifulSoup
-from weasyprint import HTML
+try:
+    import markdown as md
+    from bs4 import BeautifulSoup
+    from weasyprint import HTML
+    _DEPS_AVAILABLE = True
+except ImportError:
+    _DEPS_AVAILABLE = False
 
 TEMPLATE_DIR = Path(__file__).parent
 
@@ -35,7 +45,19 @@ RISK_CLASS = {
 }
 
 
+def check_dependencies():
+    if not _DEPS_AVAILABLE:
+        raise ImportError(
+            "md_to_pdf 缺少必要套件（markdown / beautifulsoup4 / weasyprint）。"
+            "請執行：pip install markdown beautifulsoup4 weasyprint\n"
+            "注意：weasyprint 需要系統層級的 Pango/Cairo 函式庫，"
+            "純 pip install 在部分系統上可能不夠，請參考官方安裝文件。"
+        )
+
+
 def convert(md_path: str, out_pdf: str, title: str = None, org: str = ""):
+    check_dependencies()
+
     text = Path(md_path).read_text(encoding="utf-8")
     html_body = md.markdown(text, extensions=["tables", "fenced_code", "nl2br", "sane_lists"])
     soup = BeautifulSoup(html_body, "html.parser")
