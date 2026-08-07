@@ -11,8 +11,32 @@ import json
 import uuid
 from pathlib import Path
 
-OUTPUT_DIR = Path("output")
-OUTPUT_DIR.mkdir(exist_ok=True)
+# 用函式而不是固定常數的原因：如果只是 OUTPUT_DIR = Path("output") 這種
+# 模組層級常數，其他檔案用 `from common import OUTPUT_DIR` 匯入時，
+# 會把當下的值複製一份到自己的命名空間。之後就算在別的地方改了
+# common.OUTPUT_DIR，其他模組手上那份「舊的」參照不會跟著變——
+# 這是 Python import 綁定的經典陷阱。改成函式呼叫時才決定路徑，
+# project.py 才能在執行掃描前，讓所有模組真正寫進同一個指定資料夾。
+_output_dir = Path("output")
+_output_dir.mkdir(exist_ok=True)
+
+
+def get_output_dir() -> Path:
+    return _output_dir
+
+
+def set_output_dir(path) -> Path:
+    """
+    切換所有模組接下來要寫入的輸出資料夾。呼叫這個函式之後，
+    任何模組呼叫 get_output_dir() 拿到的都會是新路徑，不需要
+    重新 import，因為讀取的是函式呼叫當下的值，不是匯入當下的值。
+    """
+    global _output_dir
+    path = Path(path)
+    path.mkdir(parents=True, exist_ok=True)
+    _output_dir = path
+    return _output_dir
+
 
 # 三個掃描模組（nmap/binwalk/zap）共用同一套 severity 分級與排序，
 # 讓合規判讀層能用同一套邏輯處理不同來源的 finding，不需要為每個
@@ -74,7 +98,7 @@ def print_file_status(label: str, file_path: str) -> None:
 
 
 def save_findings_json(findings: list[dict], base_name: str) -> str:
-    json_path = OUTPUT_DIR / f"{base_name}.json"
+    json_path = get_output_dir() / f"{base_name}.json"
     json_path.write_text(
         json.dumps(findings, indent=2, ensure_ascii=False),
         encoding="utf-8"
