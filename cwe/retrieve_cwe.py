@@ -8,7 +8,12 @@
 （cwe_id/name/description/mitigations + score 當作 confidence 的依據），
 方便之後接進 analyze_findings() 那一層的統一介面。
 """
-from build_cwe_index import COLLECTION_NAME, EMBEDDING_MODEL, QDRANT_HOST, QDRANT_PORT
+try:
+    # cwe_kb 是子資料夾（package）的情況，用相對匯入
+    from .build_cwe_index import COLLECTION_NAME, EMBEDDING_MODEL, QDRANT_HOST, QDRANT_PORT
+except ImportError:
+    # 攤平在同一層的情況，用一般匯入
+    from build_cwe_index import COLLECTION_NAME, EMBEDDING_MODEL, QDRANT_HOST, QDRANT_PORT
 
 from fastembed import TextEmbedding
 from qdrant_client import QdrantClient
