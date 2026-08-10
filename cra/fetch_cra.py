@@ -133,6 +133,17 @@ def main():
     print(f"下載中：{CRA_SOURCE_URL}")
     html_text = download_cra_html()
 
+    # 診斷輸出：不管解析成不成功，都先把原始 HTML 存下來，
+    # 這樣「下載內容本身有沒有問題」跟「解析邏輯猜錯 CSS class」
+    # 這兩種完全不同的失敗原因才分得清楚。
+    OUTPUT_PATH.parent.mkdir(exist_ok=True)
+    raw_dump_path = OUTPUT_PATH.parent / "raw_page.html"
+    raw_dump_path.write_text(html_text, encoding="utf-8")
+    print(f"[診斷] 下載內容長度：{len(html_text)} 字元，已存到 {raw_dump_path} 供人工檢查")
+    print(f"[診斷] 內容包含 'oj-ti-art' 字樣：{'oj-ti-art' in html_text}")
+    print(f"[診斷] 內容包含 'Article' 字樣：{'Article' in html_text}")
+    print(f"[診斷] 內容前 300 字元預覽：\n{html_text[:300]!r}")
+
     articles = parse_cra_html(html_text)
     for a in articles:
         a["embedding_text"] = build_embedding_text(a)
