@@ -54,15 +54,36 @@ def check_firmware_file(firmware_path: str) -> Path:
     return path
 
 
-def run_binwalk(firmware_path: Path, base_name: str) -> tuple[int, str, str]:
+def run_binwalk(
+    firmware_path: Path,
+    base_name: str,
+    extract: bool = False,
+    matryoshka: bool = False,
+    run_as_root: bool = False,
+) -> tuple[int, str, str]:
     txt_path = get_output_dir() / f"{base_name}.txt"
     log_path = get_output_dir() / f"{base_name}.log"
 
-    # 只做訊號掃描（signature scan），不加 -e 做實際解壓縮。
-    # 解壓縮會把韌體內容整批寫到磁碟，對「先盤點裡面有什麼」這個
-    # 目的來說不是必要動作，之後如果要深入分析特定區塊，
-    # 再針對那個 offset 另外跑 -e 會更可控。
-    cmd = ["binwalk", str(firmware_path)]
+    # 預設只做訊號掃描（signature scan），不解壓縮。extract/matryoshka
+    # 這兩個旗標開放使用者手動調整，但注意：目前 parse_binwalk_output()
+    # 只讀取 stdout 印出的訊號表格，解壓縮出來的實際檔案內容不會被
+    # 進一步分析（遞迴分析解壓縮內容是刻意先擱置的待辦事項，不是這次
+    # 順便做掉），開 -e 只是讓檔案被解壓縮到磁碟上，供你之後手動查看。
+    cmd = ["binwalk"]
+    if matryoshka:
+        cmd.append("-M")  # 遞迴掃描解壓縮出來的內容
+    if extract:
+        cmd.append("-e")  # 實際解壓縮
+        cmd += ["-C", str(get_output_dir() / f"{base_name}_extracted")]
+        if run_as_root:
+            # binwalk 用 root 權限執行時，預設會拒絕跑第三方解壓縮工具
+            # （這些工具處理的是攻擊者可控的韌體檔案，用 root 權限執行
+            # 有安全風險），要明確加這個旗標才會放行。Kali 常見以 root
+            # 登入，這是實際會撞到的情境，不是理論邊角案例；但這個旗標
+            # 本身就是在關掉一層安全防護，預設不開啟，UI 端呈現這個選項
+            # 時務必附上清楚的風險說明，不要預設勾選。
+            cmd.append("--run-as=root")
+    cmd.append(str(firmware_path))
 
     result = subprocess.run(
         cmd,
@@ -122,7 +143,12 @@ def parse_binwalk_output(raw_text: str, target: str) -> list[dict]:
     return results
 
 
-def run_scan(firmware_path: str) -> list[dict]:
+def run_scan(
+    firmware_path: str,
+    extract: bool = False,
+    matryoshka: bool = False,
+    run_as_root: bool = False,
+) -> list[dict]:
     """
     完整跑一次 binwalk 訊號掃描並回傳統一格式的 findings。
     設計理由跟 nmap_scan.run_scan 一致：失敗時直接丟出例外，
@@ -134,7 +160,9 @@ def run_scan(firmware_path: str) -> list[dict]:
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     base_name = f"firmware_{path.stem}_{ts}"
 
-    code, txt_file, log_file = run_binwalk(path, base_name)
+    code, txt_file, log_file = run_binwalk(
+        path, base_name, extract=extract, matryoshka=matryoshka, run_as_root=run_as_root
+    )
 
     print(f"[binwalk] Scan finished. Return code: {code}")
     print_file_status("TXT", txt_file)
@@ -156,10 +184,24 @@ def run_scan(firmware_path: str) -> list[dict]:
 def main():
     parser = argparse.ArgumentParser(description="Firmware signature scanner (binwalk wrapper)")
     parser.add_argument("firmware", help="Path to firmware file")
+    parser.add_argument("--extract", action="store_true",
+                         help="加上 -e 實際解壓縮（注意：目前只會把檔案解壓縮到磁碟，"
+                              "不會自動進一步分析解壓縮出來的內容）")
+    parser.add_argument("--matryoshka", action="store_true",
+                         help="加上 -M 遞迴掃描解壓縮出來的內容（通常跟 --extract 搭配使用）")
+    parser.add_argument("--run-as-root", action="store_true",
+                         help="若以 root 身分執行本程式，binwalk 預設會拒絕跑第三方解壓縮工具"
+                              "（處理攻擊者可控的韌體檔案有風險），加這個旗標明確放行"
+                              "（僅在搭配 --extract 時有意義；等於降低一層安全防護，請謹慎使用）")
     args = parser.parse_args()
 
     try:
-        run_scan(args.firmware)
+        run_scan(
+            args.firmware,
+            extract=args.extract,
+            matryoshka=args.matryoshka,
+            run_as_root=args.run_as_root,
+        )
     except FileNotFoundError as e:
         print(f"Error: {e}")
         sys.exit(1)
