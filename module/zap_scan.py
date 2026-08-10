@@ -1,320 +1,203 @@
 #!/usr/bin/env python3
 """
-Web 應用弱點掃描模組：透過 OWASP ZAP 的 API 對目標 URL 做 spider + active scan，
-屬於架構圖裡「收集層」的第三個掃描模組，跟 nmap（網路層）、binwalk（韌體層）互補。
+Orchestrator：依序呼叫 nmap_scan / firmware_scan / zap_scan 三個掃描模組，
+把各自回傳的 findings 彙整成一份合併報告。
 
-前提（跟 nmap／binwalk 不同，這裡不是單純呼叫本機 CLI）：
-1. 需要先在本機或遠端啟動 ZAP daemon。
-   若用 apt 裝的版本（例如 Kali 的 zaproxy 套件），執行檔名稱是 zaproxy，
-   不是官方 tarball/installer 版本裡的 zap.sh，但參數用法完全相同：
-       zaproxy -daemon -host 127.0.0.1 -port 8080 -config api.disablekey=true
-   若用官方 tarball/installer 版本，才是用 zap.sh：
-       ./zap.sh -daemon -host 127.0.0.1 -port 8080 -config api.disablekey=true
-   或使用 Docker：
-       docker run -u zap -p 8080:8080 ghcr.io/zaproxy/zaproxy:stable \
-           zap.sh -daemon -host 0.0.0.0 -port 8080 -config api.disablekey=true
-2. 這支模組透過 HTTP API 連線到 daemon，不是用 subprocess 呼叫 ZAP 本身
-   （跟 nmap/binwalk 用 subprocess 的模式不同，是這個工具本身的設計）。
-3. 需要 pip install zaproxy
-   （注意：套件名稱不是 zapv2——zapv2 是這個套件裡面的模組名稱，
-   import 時寫 from zapv2 import ZAPv2，但 pip 安裝要用 zaproxy。
-   舊名稱 python-owasp-zap-v2.4 已由官方標記為改名，不要再用。）
+對應架構圖：這支程式站在「收集層」之上，本身不做任何掃描邏輯，
+只負責「決定要跑哪些模組」跟「把結果串起來」。三個模組各自仍然可以
+單獨當 CLI 執行（python3 nmap_scan.py <ip>），這裡只是多一種串接用法。
 
-實務建議：只對「你有權限測試」的目標執行 active scan，active scan 會實際送出
-攻擊性請求（如 SQLi、XSS payload），對未授權目標這樣做可能觸犯法律。
+設計取捨：任一模組失敗（工具沒裝、連線失敗、目標格式錯誤...）不會讓
+整支程式中斷，會印出警告後跳過該模組、繼續跑其他有提供目標的模組，
+最後彙整「有成功跑完的部分」。這是因為使用者可能只有部分目標可測
+（例如只有 IP，還沒有韌體檔案），不該因為缺一項就整個失敗。
 """
 import argparse
-import shutil
-import subprocess
 import sys
-import time
 
 from datetime import datetime
 from pathlib import Path
-from urllib.parse import urlparse
 
-from common import get_output_dir, print_file_status, save_findings_json, make_finding, print_findings
+from common import save_findings_json, print_findings, set_output_dir, get_output_dir
+
+import nmap_scan
+import firmware_scan
+import zap_scan
+import report
 
 try:
-    from zapv2 import ZAPv2
+    # md_to_pdf 是子資料夾（package）的情況
+    from md_to_pdf.md_to_pdf import convert as convert_md_to_pdf
 except ImportError:
-    ZAPv2 = None
-
-DEFAULT_ZAP_API_URL = "http://127.0.0.1:8080"
-ZAP_STARTUP_TIMEOUT = 90  # daemon 冷啟動可能要一分鐘以上，給充裕的等待時間
-
-
-class ZapConnectionError(Exception):
-    """ZAP daemon 連不上時丟出，跟 requests/zapv2 底層各種例外型別隔開，
-    讓呼叫端只需要認得這一種例外就能判斷『是連線問題』。"""
-    pass
-
-# ZAP 自己的 risk 分級（High/Medium/Low/Informational）代表 ZAP 內建規則庫
-# 的專業判斷，但不直接拿來當作頂層的 severity——收集層階段統一先給 info，
-# 讓 nmap/binwalk/zap 三種來源在「進合規判讀層之前」站在同一個起跑點，
-# 不會有的來源已經被工具自己的規則庫打過分、有的還沒。
-# ZAP 原本的判斷不會遺失，正規化成小寫後存進 detail.zap_risk，
-# 合規判讀層仍然可以參考它，只是不再直接等於我們的 severity。
-RISK_TO_ZAP_RISK = {
-    "High": "high",
-    "Medium": "medium",
-    "Low": "low",
-    "Informational": "info",
-}
-
-
-def check_zapv2_installed():
-    if ZAPv2 is None:
-        raise ImportError(
-            "zaproxy (Python client) not installed. "
-            "Run: pip install zaproxy"
-        )
-
-
-def validate_target_url(url: str) -> str:
-    parsed = urlparse(url)
-    if parsed.scheme not in ("http", "https") or not parsed.netloc:
-        raise ValueError(f"'{url}' is not a valid http(s) URL")
-    return url
-
-
-def connect_zap(zap_api_url: str = DEFAULT_ZAP_API_URL) -> "ZAPv2":
-    zap = ZAPv2(proxies={"http": zap_api_url, "https": zap_api_url})
     try:
-        # 用 zap.core.version 當作連線探測：daemon 沒開的話這裡會直接丟例外，
-        # 讓呼叫端能盡早發現「不是掃描目標的問題，是 ZAP daemon 沒啟動」。
-        zap.core.version
-    except Exception as e:
-        raise ZapConnectionError(f"cannot connect to ZAP daemon at {zap_api_url} ({e})") from e
-    return zap
+        # md_to_pdf.py 跟其他模組攤平在同一層的情況
+        from md_to_pdf import convert as convert_md_to_pdf
+    except ImportError:
+        convert_md_to_pdf = None
 
 
-def is_zap_reachable(zap_api_url: str = DEFAULT_ZAP_API_URL) -> bool:
-    try:
-        connect_zap(zap_api_url)
-        return True
-    except ZapConnectionError:
-        return False
-
-
-def find_zap_launcher() -> str:
-    """
-    找出可用的 ZAP 啟動指令。不同安裝方式的執行檔名稱不一樣
-    （apt 版是 zaproxy，官方 tarball 版是 zap.sh），這裡都嘗試找找看。
-    """
-    for name in ("zaproxy", "zap.sh", "owasp-zap"):
-        path = shutil.which(name)
-        if path is not None:
-            return path
-    raise FileNotFoundError(
-        "找不到可執行的 ZAP（嘗試過 zaproxy / zap.sh / owasp-zap）。"
-        "請先安裝 ZAP，或改用 --zap-api-url 指向已經在跑的 daemon。"
-    )
-
-
-def start_zap_daemon(zap_api_url: str = DEFAULT_ZAP_API_URL) -> subprocess.Popen:
-    """
-    背景啟動一個 ZAP daemon。用 Popen（非阻塞）而不是 run，
-    是因為 daemon 要一直活著、不能等它「執行完」——它本來就不會執行完。
-    """
-    launcher = find_zap_launcher()
-    parsed = urlparse(zap_api_url)
-    host = parsed.hostname or "127.0.0.1"
-    port = parsed.port or 8080
-
-    # daemon 啟動過程的 log 別直接噴到終端機，落地成檔案，
-    # 掃描失敗時方便回頭查是不是 daemon 本身啟動有問題。
-    startup_log = get_output_dir() / "zap_daemon_startup.log"
-    log_fp = open(startup_log, "w", encoding="utf-8")
-
-    proc = subprocess.Popen(
-        [launcher, "-daemon", "-host", host, "-port", str(port), "-config", "api.disablekey=true"],
-        stdout=log_fp,
-        stderr=subprocess.STDOUT,
-    )
-    print(f"[zap] 已啟動 ZAP daemon（pid={proc.pid}），啟動 log： {startup_log}")
-    return proc
-
-
-def wait_for_zap_ready(zap_api_url: str = DEFAULT_ZAP_API_URL, timeout: int = ZAP_STARTUP_TIMEOUT) -> None:
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        if is_zap_reachable(zap_api_url):
-            return
-        time.sleep(2)
-    raise ZapConnectionError(f"ZAP daemon 在 {timeout} 秒內沒有就緒（啟動超時）")
-
-
-def run_zap_scan(
-    zap: "ZAPv2",
-    target_url: str,
-    base_name: str,
-    active_scan: bool = True,
-    poll_interval: int = 2,
-) -> tuple[str, str]:
-    log_lines = [f"Target: {target_url}", f"Started: {datetime.now().isoformat()}"]
-
-    # 1. Spider：爬過目標網站的連結，讓 ZAP 知道有哪些頁面/端點存在
-    log_lines.append("---- Spider ----")
-    spider_id = zap.spider.scan(target_url)
-    while int(zap.spider.status(spider_id)) < 100:
-        time.sleep(poll_interval)
-    log_lines.append(f"Spider finished. URLs found: {len(zap.spider.results(spider_id))}")
-
-    # 2. Active scan：對爬到的端點實際送出攻擊性測試請求
-    #    這步驟才是真正產生弱點發現的地方，spider 只是先探路
-    if active_scan:
-        log_lines.append("---- Active scan ----")
-        ascan_id = zap.ascan.scan(target_url)
-        while int(zap.ascan.status(ascan_id)) < 100:
-            time.sleep(poll_interval)
-        log_lines.append("Active scan finished.")
-
-    log_path = get_output_dir() / f"{base_name}.log"
-    log_path.write_text("\n".join(log_lines) + "\n", encoding="utf-8")
-
-    # 3. 取得 alerts：把 ZAP 原始的 alert 清單存成 raw json，保留完整欄位
-    #    （跟 nmap 的 -oX、binwalk 的 .txt 一樣，都是「原始證據層」）
-    alerts = zap.core.alerts(baseurl=target_url)
-    raw_json_path = get_output_dir() / f"{base_name}_raw.json"
-    import json as _json
-    raw_json_path.write_text(
-        _json.dumps(alerts, indent=2, ensure_ascii=False), encoding="utf-8"
-    )
-
-    return str(raw_json_path), str(log_path)
-
-
-def parse_zap_alerts(alerts: list[dict]) -> list[dict]:
-    results = []
-    for alert in alerts:
-        risk = alert.get("risk", "Informational")
-        results.append(make_finding(
-            category="webapp",
-            source="zap",
-            target=alert.get("url", ""),
-            severity="info",  # 收集層統一給 info，跟 nmap/binwalk 一致；真正的
-                               # 風險判斷交給後面的合規判讀層根據 detail 重新評估
-            title=alert.get("alert", alert.get("name", "")),
-            detail={
-                "param": alert.get("param", ""),
-                "description": alert.get("description", "")[:200],
-                "cweid": alert.get("cweid", ""),
-                "zap_risk": RISK_TO_ZAP_RISK.get(risk, "info"),  # ZAP 自己的判斷，保留備查
-            },
-        ))
-    return results
-
-
-def run_scan(
-    url: str,
-    zap_api_url: str = DEFAULT_ZAP_API_URL,
-    active_scan: bool = True,
-    auto_start: bool = False,
+def run_network_scan(
+    ip: str,
+    ports: str | None = None,
+    timing: str = "T3",
+    os_detection: bool = False,
+    vuln_scripts: bool = False,
 ) -> list[dict]:
-    """
-    完整跑一次 ZAP 掃描並回傳統一格式的 findings。
-    設計理由跟 nmap_scan.run_scan / firmware_scan.run_scan 一致：
-    失敗時丟出例外，交給呼叫端（CLI 的 main() 或 orchestrator）處理。
-
-    auto_start=False（預設）：daemon 沒開就直接失敗，適合你會連續測試
-    多個目標、想自己控制 daemon 什麼時候開/關的情境，效率最高。
-
-    auto_start=True：偵測到 daemon 沒開才自動啟動，掃描結束後只關掉
-    「自己啟動的那個」——如果偵測到 daemon 本來就在跑（你自己手動開的），
-    完全不會去動它，避免誤殺你原本還想用的 daemon。
-    """
-    check_zapv2_installed()
-    target_url = validate_target_url(url)
-
-    daemon_proc = None
-    if auto_start and not is_zap_reachable(zap_api_url):
-        print("[zap] 偵測不到 ZAP daemon，嘗試自動啟動...")
-        daemon_proc = start_zap_daemon(zap_api_url)
-        try:
-            wait_for_zap_ready(zap_api_url)
-        except ZapConnectionError:
-            daemon_proc.terminate()
-            raise
-        print("[zap] ZAP daemon 已就緒。")
-
     try:
-        zap = connect_zap(zap_api_url)  # 連不上時丟 ZapConnectionError
-
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        host = urlparse(target_url).netloc.replace(":", "_")
-        base_name = f"zap_{host}_{ts}"
-
-        raw_json_file, log_file = run_zap_scan(
-            zap, target_url, base_name, active_scan=active_scan
+        return nmap_scan.run_scan(
+            ip, ports=ports, timing=timing, os_detection=os_detection, vuln_scripts=vuln_scripts
         )
+    except FileNotFoundError as e:
+        print(f"[nmap] Error: {e}")
+    except ValueError as e:
+        print(f"[nmap] Error: {e}")
+    return []
 
-        print("[zap] Scan finished.")
-        print_file_status("RAW_JSON", raw_json_file)
-        print_file_status("LOG", log_file)
 
-        if not Path(raw_json_file).exists():
-            return []
+def run_firmware_scan(
+    firmware_path: str,
+    extract: bool = False,
+    matryoshka: bool = False,
+    run_as_root: bool = False,
+) -> list[dict]:
+    try:
+        return firmware_scan.run_scan(
+            firmware_path, extract=extract, matryoshka=matryoshka, run_as_root=run_as_root
+        )
+    except FileNotFoundError as e:
+        print(f"[firmware] Error: {e}")
+    return []
 
-        import json as _json
-        alerts = _json.loads(Path(raw_json_file).read_text(encoding="utf-8"))
-        findings = parse_zap_alerts(alerts)
 
-        json_file = save_findings_json(findings, base_name)
-        print_file_status("JSON", json_file)
-        print_findings(findings, empty_message="No alerts found.")
-
-        return findings
-    finally:
-        # 只關掉自己剛剛啟動的 daemon；daemon_proc 是 None 代表
-        # 這次掃描用的是「本來就在跑」的 daemon，不去動它。
-        if daemon_proc is not None:
-            print("[zap] 掃描結束，關閉自動啟動的 ZAP daemon...")
-            daemon_proc.terminate()
-            try:
-                daemon_proc.wait(timeout=15)
-            except subprocess.TimeoutExpired:
-                daemon_proc.kill()
+def run_webapp_scan(url: str, zap_api_url: str, active_scan: bool, auto_start: bool) -> list[dict]:
+    try:
+        return zap_scan.run_scan(
+            url, zap_api_url=zap_api_url, active_scan=active_scan, auto_start=auto_start
+        )
+    except ImportError as e:
+        print(f"[zap] Error: {e}")
+    except ValueError as e:
+        print(f"[zap] Error: {e}")
+    except FileNotFoundError as e:
+        print(f"[zap] Error: {e}")
+    except zap_scan.ZapConnectionError as e:
+        print(f"[zap] Error: {e}")
+        print("[zap] 請確認 ZAP daemon 已啟動，例如：zaproxy -daemon -port 8080 -config api.disablekey=true")
+        print("[zap] 或加上 --zap-auto-start 讓程式自動幫你啟動。")
+    return []
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Web app vulnerability scanner (OWASP ZAP wrapper)")
-    parser.add_argument("url", help="Target URL, e.g. http://192.168.1.1:8080")
-    parser.add_argument(
-        "--zap-api-url", default=DEFAULT_ZAP_API_URL,
-        help=f"ZAP daemon API URL (default: {DEFAULT_ZAP_API_URL})"
+    parser = argparse.ArgumentParser(
+        description="IoT compliance scanner orchestrator (nmap + binwalk + ZAP)"
     )
-    parser.add_argument(
-        "--no-active-scan", action="store_true",
-        help="只做 spider，不送出攻擊性請求（適合尚未取得測試授權時的初步盤點）"
-    )
-    parser.add_argument(
-        "--auto-start", action="store_true",
-        help="偵測不到 ZAP daemon 時自動啟動，掃描結束後自動關閉（只關掉自己啟動的那個）"
-    )
+    parser.add_argument("--ip", help="Target IP address or CIDR range for network scan (nmap), e.g. 192.168.1.1 or 192.168.1.0/24")
+    parser.add_argument("--ports", default=None,
+                         help="nmap port 範圍，如 '1-1000' 或 '22,80,443'（搭配 --ip 使用）")
+    parser.add_argument("--timing", default="T3", choices=sorted(nmap_scan.VALID_TIMING_TEMPLATES),
+                         help="nmap timing template T0(最慢)~T5(最快)，預設 T3")
+    parser.add_argument("--os-detection", action="store_true",
+                         help="nmap 加上 -O 做作業系統指紋辨識")
+    parser.add_argument("--vuln-scripts", action="store_true",
+                         help="nmap 加上 --script vuln 執行已知漏洞探測腳本")
+    parser.add_argument("--firmware", help="Path to firmware file for firmware scan (binwalk)")
+    parser.add_argument("--extract", action="store_true",
+                         help="binwalk 加上 -e 實際解壓縮（搭配 --firmware 使用）")
+    parser.add_argument("--matryoshka", action="store_true",
+                         help="binwalk 加上 -M 遞迴掃描解壓縮出來的內容")
+    parser.add_argument("--run-as-root", action="store_true",
+                         help="binwalk 以 root 執行時，明確放行第三方解壓縮工具"
+                              "（降低一層安全防護，僅在 --extract 且以 root 執行時需要）")
+    parser.add_argument("--url", help="Target URL for web app scan (ZAP)")
+    parser.add_argument("--zap-api-url", default=zap_scan.DEFAULT_ZAP_API_URL,
+                         help=f"ZAP daemon API URL (default: {zap_scan.DEFAULT_ZAP_API_URL})")
+    parser.add_argument("--no-active-scan", action="store_true",
+                         help="ZAP 只做 spider，不送出攻擊性請求")
+    parser.add_argument("--zap-auto-start", action="store_true",
+                         help="偵測不到 ZAP daemon 時自動啟動，掃描結束後自動關閉")
+    parser.add_argument("--report", action="store_true",
+                         help="掃描完成後一併產生 Markdown 合規報告")
+    parser.add_argument("--operator", default="unknown",
+                         help="操作者名稱，寫入報告的 Scan Information（搭配 --report 使用）")
+    parser.add_argument("--pdf", action="store_true",
+                         help="在 Markdown 報告之外，另外產生 PDF 版本（需搭配 --report）")
+    parser.add_argument("--org", default="",
+                         help="單位/系統名稱，顯示於 PDF 頁首頁尾（搭配 --pdf 使用）")
+    parser.add_argument("--title", default=None,
+                         help="PDF 報告標題，預設取自報告內文第一個標題（搭配 --pdf 使用）")
     args = parser.parse_args()
 
-    try:
-        run_scan(
-            args.url,
-            zap_api_url=args.zap_api_url,
-            active_scan=not args.no_active_scan,
-            auto_start=args.auto_start,
+    if not (args.ip or args.firmware or args.url):
+        parser.error("至少要提供 --ip、--firmware、--url 其中一個目標")
+
+    # 在任何模組開始寫檔之前，先建立本次執行專屬的資料夾，並切換
+    # common.get_output_dir()，讓 nmap_scan/firmware_scan/zap_scan/report
+    # 這些模組接下來呼叫 get_output_dir() 拿到的都是這個新路徑——
+    # 不需要逐一傳參數給每個模組，因為它們都是在「呼叫的當下」才去
+    # 讀取路徑，而不是在 import 當下就把路徑寫死。
+    run_ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    run_dir = set_output_dir(Path("output") / run_ts)
+    print(f"本次執行輸出資料夾：{run_dir}")
+    print()
+
+    all_findings: list[dict] = []
+
+    if args.ip:
+        print("==== [1/3] Network scan (nmap) ====")
+        all_findings += run_network_scan(
+            args.ip, ports=args.ports, timing=args.timing,
+            os_detection=args.os_detection, vuln_scripts=args.vuln_scripts,
         )
-    except ImportError as e:
-        print(f"Error: {e}")
-        sys.exit(1)
-    except ValueError as e:
-        print(f"Error: {e}")
-        sys.exit(1)
-    except FileNotFoundError as e:
-        print(f"Error: {e}")
-        sys.exit(1)
-    except ZapConnectionError as e:
-        print(f"Error: {e}")
-        print("請確認 ZAP daemon 已啟動，例如：zaproxy -daemon -port 8080 -config api.disablekey=true")
-        print("或加上 --auto-start 讓程式自動幫你啟動。")
-        sys.exit(1)
+        print()
+
+    if args.firmware:
+        print("==== [2/3] Firmware scan (binwalk) ====")
+        all_findings += run_firmware_scan(
+            args.firmware, extract=args.extract, matryoshka=args.matryoshka,
+            run_as_root=args.run_as_root,
+        )
+        print()
+
+    if args.url:
+        print("==== [3/3] Web app scan (ZAP) ====")
+        all_findings += run_webapp_scan(args.url, args.zap_api_url, not args.no_active_scan, args.zap_auto_start)
+        print()
+
+    combined_json = save_findings_json(all_findings, f"combined_{run_ts}")
+
+    print("==== Combined report ====")
+    print(f"Combined JSON saved to: {combined_json}")
+    print_findings(all_findings, empty_message="No findings from any module.")
+
+    if args.report:
+        scan_metadata = report.build_scan_metadata(
+            operator=args.operator,
+            ip=args.ip or "",
+            firmware=args.firmware or "",
+            url=args.url or "",
+        )
+        content = report.render_report(all_findings, scan_metadata)
+        # 沿用跟 combined json 相同的時間戳記，方便從報告回溯到是哪次
+        # orchestrator 執行產生的（跟 combined_{run_ts}.json 對應）
+        report_path = report.save_report(content, f"report_{run_ts}")
+
+        print()
+        print("==== Report ====")
+        print(f"Report saved to: {report_path}")
+
+        if args.pdf:
+            # PDF 轉換失敗不該讓已經產出的 Markdown 報告白費，
+            # 只印警告並跳過，跟其他選用依賴（ZAP daemon、CWE 知識庫）
+            # 一致的優雅降級原則。
+            if convert_md_to_pdf is None:
+                print("[pdf] Error: md_to_pdf 模組無法載入，略過 PDF 產生。")
+                print("[pdf] 請確認 md_to_pdf/ 資料夾存在，且已安裝 markdown/beautifulsoup4/weasyprint。")
+            else:
+                pdf_path = report_path.replace(".md", ".pdf")
+                try:
+                    convert_md_to_pdf(report_path, pdf_path, title=args.title, org=args.org)
+                except Exception as e:
+                    print(f"[pdf] Error: PDF 轉換失敗（{e}），Markdown 報告仍可正常使用。")
 
 
 if __name__ == "__main__":
