@@ -23,9 +23,9 @@ CRA 全文條號：https://eur-lex.europa.eu/eli/reg/2024/2847
 import argparse
 import re
 import sys
-import urllib.request
 from pathlib import Path
 
+import requests
 from bs4 import BeautifulSoup
 
 CRA_SOURCE_URL = "https://eur-lex.europa.eu/legal-content/EN/TXT/HTML/?uri=OJ:L_202402847"
@@ -34,14 +34,39 @@ EXPECTED_ARTICLE_COUNT = 71  # CRA 官方公告全文共 71 條，用來事後�
 
 ARTICLE_NO_PATTERN = re.compile(r"Article\s+(\d+)", re.IGNORECASE)
 
+# 完整的瀏覽器標頭：EUR-Lex 對「明顯不是瀏覽器」的請求（例如標頭過於
+#陽春的 urllib 預設請求）可能回傳空內容或做簡易反爬蟲判斷，即使 HTTP
+# 狀態碼是 200。這裡盡量模擬真實瀏覽器會帶的標頭組合。
+BROWSER_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    ),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+}
+
 
 def download_cra_html() -> str:
-    req = urllib.request.Request(
-        CRA_SOURCE_URL,
-        headers={"User-Agent": "Mozilla/5.0 (compatible; CRA-fetch-script/1.0)"},
-    )
-    with urllib.request.urlopen(req, timeout=60) as resp:
-        return resp.read().decode("utf-8", errors="replace")
+    # 用 Session 而不是單次 request：先訪問一次網域首頁，讓伺服器
+    # 有機會發回 cookie（EUR-Lex 部分頁面需要 session cookie 才會
+    # 回傳完整內容，直接單次請求目標頁面可能拿到空的或被導向的內容），
+    # 這是在模擬「手動用瀏覽器開網頁時，瀏覽器本來就會先建立連線、
+    # 帶上 cookie」這個過程。
+    session = requests.Session()
+    session.headers.update(BROWSER_HEADERS)
+
+    session.get("https://eur-lex.europa.eu/", timeout=30)
+
+    resp = session.get(CRA_SOURCE_URL, timeout=60)
+
+    print(f"[診斷] HTTP 狀態碼：{resp.status_code}")
+    print(f"[診斷] Content-Type：{resp.headers.get('Content-Type')}")
+    print(f"[診斷] Content-Length 標頭：{resp.headers.get('Content-Length')}")
+    print(f"[診斷] 實際收到 bytes 數：{len(resp.content)}")
+
+    resp.raise_for_status()
+    return resp.text
 
 
 def parse_via_css_classes(soup: BeautifulSoup) -> list[dict]:
