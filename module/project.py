@@ -36,19 +36,38 @@ except ImportError:
         convert_md_to_pdf = None
 
 
-def run_network_scan(ip: str) -> list[dict]:
+def run_network_scan(
+    ip: str,
+    ports: str | None = None,
+    timing: str = "T3",
+    os_detection: bool = False,
+    vuln_scripts: bool = False,
+    scan_technique: str | None = None,
+    host_discovery: bool = False,
+    script_category: str | None = None,
+) -> list[dict]:
     try:
-        return nmap_scan.run_scan(ip)
+        return nmap_scan.run_scan(
+            ip, ports=ports, timing=timing, os_detection=os_detection, vuln_scripts=vuln_scripts,
+            scan_technique=scan_technique, host_discovery=host_discovery, script_category=script_category,
+        )
     except FileNotFoundError as e:
         print(f"[nmap] Error: {e}")
-    except ValueError:
-        print(f"[nmap] Error: '{ip}' is not a valid IP address.")
+    except ValueError as e:
+        print(f"[nmap] Error: {e}")
     return []
 
 
-def run_firmware_scan(firmware_path: str) -> list[dict]:
+def run_firmware_scan(
+    firmware_path: str,
+    extract: bool = False,
+    matryoshka: bool = False,
+    run_as_root: bool = False,
+) -> list[dict]:
     try:
-        return firmware_scan.run_scan(firmware_path)
+        return firmware_scan.run_scan(
+            firmware_path, extract=extract, matryoshka=matryoshka, run_as_root=run_as_root
+        )
     except FileNotFoundError as e:
         print(f"[firmware] Error: {e}")
     return []
@@ -76,8 +95,30 @@ def main():
     parser = argparse.ArgumentParser(
         description="IoT compliance scanner orchestrator (nmap + binwalk + ZAP)"
     )
-    parser.add_argument("--ip", help="Target IP for network scan (nmap)")
+    parser.add_argument("--ip", help="Target: single IP, CIDR range, or comma-separated list "
+                                      "for network scan (nmap)")
+    parser.add_argument("--ports", default=None,
+                         help="nmap port 範圍，如 '1-1000' 或 '22,80,443'（搭配 --ip 使用）")
+    parser.add_argument("--timing", default="T3", choices=sorted(nmap_scan.VALID_TIMING_TEMPLATES),
+                         help="nmap timing template T0(最慢)~T5(最快)，預設 T3")
+    parser.add_argument("--os-detection", action="store_true",
+                         help="nmap 加上 -O 做作業系統指紋辨識")
+    parser.add_argument("--vuln-scripts", action="store_true",
+                         help="nmap 加上 --script vuln 執行已知漏洞探測腳本")
+    parser.add_argument("--script-category", default=None, choices=sorted(nmap_scan.VALID_SCRIPT_CATEGORIES),
+                         help="nmap 執行指定分類的 NSE script（vuln/default/discovery/safe）")
+    parser.add_argument("--scan-technique", default=None, choices=sorted(nmap_scan.SCAN_TECHNIQUES),
+                         help="nmap 掃描技巧：syn/connect/udp")
+    parser.add_argument("--host-discovery", action="store_true",
+                         help="nmap 先做主機存活探測（ping），預設關閉")
     parser.add_argument("--firmware", help="Path to firmware file for firmware scan (binwalk)")
+    parser.add_argument("--extract", action="store_true",
+                         help="binwalk 加上 -e 實際解壓縮（搭配 --firmware 使用）")
+    parser.add_argument("--matryoshka", action="store_true",
+                         help="binwalk 加上 -M 遞迴掃描解壓縮出來的內容")
+    parser.add_argument("--run-as-root", action="store_true",
+                         help="binwalk 以 root 執行時，明確放行第三方解壓縮工具"
+                              "（降低一層安全防護，僅在 --extract 且以 root 執行時需要）")
     parser.add_argument("--url", help="Target URL for web app scan (ZAP)")
     parser.add_argument("--zap-api-url", default=zap_scan.DEFAULT_ZAP_API_URL,
                          help=f"ZAP daemon API URL (default: {zap_scan.DEFAULT_ZAP_API_URL})")
@@ -114,12 +155,20 @@ def main():
 
     if args.ip:
         print("==== [1/3] Network scan (nmap) ====")
-        all_findings += run_network_scan(args.ip)
+        all_findings += run_network_scan(
+            args.ip, ports=args.ports, timing=args.timing,
+            os_detection=args.os_detection, vuln_scripts=args.vuln_scripts,
+            scan_technique=args.scan_technique, host_discovery=args.host_discovery,
+            script_category=args.script_category,
+        )
         print()
 
     if args.firmware:
         print("==== [2/3] Firmware scan (binwalk) ====")
-        all_findings += run_firmware_scan(args.firmware)
+        all_findings += run_firmware_scan(
+            args.firmware, extract=args.extract, matryoshka=args.matryoshka,
+            run_as_root=args.run_as_root,
+        )
         print()
 
     if args.url:
@@ -134,18 +183,12 @@ def main():
     print_findings(all_findings, empty_message="No findings from any module.")
 
     if args.report:
-        # scope 依實際有提供的目標動態組成，讓報告的 Scan Information
-        # 清楚交代這次掃描涵蓋了哪些對象，而不是只寫一個籠統的字串
-        scope_parts = []
-        if args.ip:
-            scope_parts.append(f"IP: {args.ip}")
-        if args.firmware:
-            scope_parts.append(f"Firmware: {args.firmware}")
-        if args.url:
-            scope_parts.append(f"URL: {args.url}")
-        scope = "; ".join(scope_parts)
-
-        scan_metadata = report.build_scan_metadata(scope=scope, operator=args.operator)
+        scan_metadata = report.build_scan_metadata(
+            operator=args.operator,
+            ip=args.ip or "",
+            firmware=args.firmware or "",
+            url=args.url or "",
+        )
         content = report.render_report(all_findings, scan_metadata)
         # 沿用跟 combined json 相同的時間戳記，方便從報告回溯到是哪次
         # orchestrator 執行產生的（跟 combined_{run_ts}.json 對應）
