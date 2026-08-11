@@ -1,0 +1,216 @@
+#!/usr/bin/env python3
+"""
+FastAPI 後端：把 project.py 的 run_pipeline() 包成 HTTP API，供前端呼叫。
+
+單一使用者、本機執行的假設：同一時間只允許一個掃描工作在跑（用一個
+全域鎖 + 單一 job 記錄），不做多工作佇列。這是刻意的簡化——多個掃描
+同時跑會讓 stdout 擷取、輸出資料夾切換（common.get_output_dir()/
+set_output_dir() 是全域狀態，不是 thread-local）互相干擾，要做對
+「多工作並行」需要更大的重構（例如每個 job 開獨立 process），對
+「先在本地跑起來」這個目標來說不是必要的第一步。
+"""
+import io
+import shutil
+import sys
+import threading
+import uuid
+from contextlib import redirect_stdout
+from pathlib import Path
+
+from fastapi import FastAPI, UploadFile, Form, File, HTTPException
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.cors import CORSMiddleware
+
+# 讓 backend/main.py 能 import 到專案根目錄下的模組（project.py/common.py/...）
+# 目錄結構假設：<專案根>/webapp/backend/main.py，往上三層就是專案根。
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
+
+import project  # noqa: E402
+import nmap_scan  # noqa: E402
+import zap_scan  # noqa: E402
+import common  # noqa: E402
+
+# 專案根目錄（backend/main.py 往上兩層）。用絕對路徑而不是讓
+# set_output_dir() 用相對路徑「output」，是因為相對路徑會跟著
+# uvicorn 啟動時的工作目錄走——如果從 webapp/backend/ 底下啟動，
+# 輸出會意外跑到 webapp/backend/output/，跟透過 CLI（在專案根目錄
+# 執行 python3 project.py）產生的 output/ 分散在兩個不同地方，
+# 導致同一個工具、不同執行方式的輸出資料夾不一致。
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+
+UPLOAD_DIR = Path(__file__).resolve().parent / "uploads"
+UPLOAD_DIR.mkdir(exist_ok=True)
+
+FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
+
+app = FastAPI(title="IoT Compliance Scanner API")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # 本機單人使用的工具，先簡化；要對外部署時務必收斂
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+_lock = threading.Lock()
+_job: dict | None = None  # 目前唯一的一份 job 狀態（單一工作佇列，不支援並行）
+
+
+class _LogCapture(io.TextIOBase):
+    """
+    把 print() 輸出即時累積進 job["log"] 這個 list，讓前端可以輪詢到
+    掃描進行中的即時輸出，而不是整個 pipeline 跑完才一次看到全部內容。
+    """
+    def __init__(self, job_ref: dict):
+        self.job_ref = job_ref
+
+    def write(self, s: str) -> int:
+        if s.strip():
+            self.job_ref["log"].append(s.rstrip("\n"))
+        return len(s)
+
+
+def _run_job(job_ref: dict, params: dict) -> None:
+    capture = _LogCapture(job_ref)
+    try:
+        with redirect_stdout(capture):
+            result = project.run_pipeline(**params)
+        job_ref["status"] = "done"
+        job_ref["result"] = result
+    except Exception as e:
+        job_ref["status"] = "error"
+        job_ref["error"] = str(e)
+    finally:
+        # 清掉這次上傳的韌體暫存檔（如果有），pipeline 執行完已經不需要
+        # 原始檔案了，避免 uploads/ 資料夾一直累積舊檔案佔用磁碟空間。
+        firmware_path = params.get("firmware")
+        if firmware_path and Path(firmware_path).is_file():
+            try:
+                Path(firmware_path).unlink()
+            except OSError:
+                pass
+
+
+@app.get("/api/options")
+def get_options():
+    """
+    回傳前端下拉選單要用的合法選項，直接來源就是後端已經定義好的
+    集合，前端不需要自己硬編一份可能跟後端邏輯對不上的清單。
+    """
+    return {
+        "timing": sorted(nmap_scan.VALID_TIMING_TEMPLATES),
+        "scan_technique": sorted(nmap_scan.SCAN_TECHNIQUES),
+        "script_category": sorted(nmap_scan.VALID_SCRIPT_CATEGORIES),
+        "zap_api_url_default": zap_scan.DEFAULT_ZAP_API_URL,
+    }
+
+
+@app.post("/api/scan")
+async def start_scan(
+    ip: str = Form(""),
+    ports: str = Form(""),
+    timing: str = Form("T3"),
+    os_detection: bool = Form(False),
+    scan_technique: str = Form(""),
+    host_discovery: bool = Form(False),
+    script_category: str = Form(""),
+    extract: bool = Form(False),
+    matryoshka: bool = Form(False),
+    run_as_root: bool = Form(False),
+    url: str = Form(""),
+    zap_api_url: str = Form(""),
+    active_scan: bool = Form(True),
+    zap_auto_start: bool = Form(False),
+    make_report: bool = Form(False),
+    operator: str = Form("unknown"),
+    make_pdf: bool = Form(False),
+    org: str = Form(""),
+    title: str = Form(""),
+    firmware_file: UploadFile | None = File(None),
+):
+    global _job
+
+    if not (ip.strip() or url.strip() or (firmware_file is not None and firmware_file.filename)):
+        raise HTTPException(status_code=400, detail="至少要提供 IP、韌體檔案、URL 其中一項目標。")
+
+    if not _lock.acquire(blocking=False):
+        raise HTTPException(status_code=409, detail="已經有一個掃描工作正在執行，請稍候再試。")
+
+    try:
+        firmware_path = None
+        if firmware_file is not None and firmware_file.filename:
+            # 檔名只取 basename，避免上傳檔名帶路徑片段（如 "../../x"）
+            # 被拿來當實際寫入路徑，寫到 uploads/ 資料夾以外的地方。
+            safe_filename = Path(firmware_file.filename).name
+            firmware_path = str(UPLOAD_DIR / safe_filename)
+            with open(firmware_path, "wb") as f:
+                shutil.copyfileobj(firmware_file.file, f)
+
+        job_id = uuid.uuid4().hex[:12]
+        job_ref = {"id": job_id, "status": "running", "log": [], "result": None, "error": None}
+        _job = job_ref
+
+        params = dict(
+            ip=ip.strip() or None,
+            ports=ports.strip() or None,
+            timing=timing,
+            os_detection=os_detection,
+            vuln_scripts=False,  # 前端統一用 script_category 表達，不重複開放兩種寫法
+            scan_technique=scan_technique or None,
+            host_discovery=host_discovery,
+            script_category=script_category or None,
+            firmware=firmware_path,
+            extract=extract,
+            matryoshka=matryoshka,
+            run_as_root=run_as_root,
+            url=url.strip() or None,
+            zap_api_url=zap_api_url.strip() or zap_scan.DEFAULT_ZAP_API_URL,
+            active_scan=active_scan,
+            zap_auto_start=zap_auto_start,
+            make_report=make_report,
+            operator=operator.strip() or "unknown",
+            make_pdf=make_pdf,
+            org=org.strip(),
+            title=title.strip() or None,
+            output_root=PROJECT_ROOT / "output",
+        )
+
+        def _target():
+            try:
+                _run_job(job_ref, params)
+            finally:
+                _lock.release()
+
+        threading.Thread(target=_target, daemon=True).start()
+        return {"job_id": job_id}
+    except Exception:
+        _lock.release()
+        raise
+
+
+@app.get("/api/scan/current")
+def get_current_scan():
+    if _job is None:
+        raise HTTPException(status_code=404, detail="尚未執行過任何掃描。")
+    return _job
+
+
+@app.get("/api/download/{filename}")
+def download_file(filename: str):
+    if _job is None or _job.get("result") is None:
+        raise HTTPException(status_code=404, detail="沒有可下載的檔案。")
+
+    run_dir = Path(_job["result"]["run_dir"]).resolve()
+    # 防止路徑穿越（filename 裡塞 "../" 之類的片段）：只取檔名本身，
+    # 並確認最終路徑真的落在這次執行的輸出資料夾底下。
+    target = (run_dir / Path(filename).name).resolve()
+    if run_dir not in target.parents and target != run_dir:
+        raise HTTPException(status_code=400, detail="不合法的檔案路徑。")
+    if not target.is_file():
+        raise HTTPException(status_code=404, detail="找不到這個檔案。")
+
+    return FileResponse(target, filename=target.name)
+
+
+# 靜態前端掛在最後，確保 /api/* 路由優先於這個 catch-all 生效
+app.mount("/", StaticFiles(directory=str(FRONTEND_DIR), html=True), name="frontend")
