@@ -91,6 +91,131 @@ def run_webapp_scan(url: str, zap_api_url: str, active_scan: bool, auto_start: b
     return []
 
 
+def run_pipeline(
+    ip: str | None = None,
+    ports: str | None = None,
+    timing: str = "T3",
+    os_detection: bool = False,
+    vuln_scripts: bool = False,
+    scan_technique: str | None = None,
+    host_discovery: bool = False,
+    script_category: str | None = None,
+    firmware: str | None = None,
+    extract: bool = False,
+    matryoshka: bool = False,
+    run_as_root: bool = False,
+    url: str | None = None,
+    zap_api_url: str = zap_scan.DEFAULT_ZAP_API_URL,
+    active_scan: bool = True,
+    zap_auto_start: bool = False,
+    make_report: bool = False,
+    operator: str = "unknown",
+    make_pdf: bool = False,
+    org: str = "",
+    title: str | None = None,
+    output_root: Path | None = None,
+) -> dict:
+    """
+    核心 pipeline：串接三個掃描模組 + 報告 + PDF，回傳結構化結果。
+
+    抽成獨立函式（而不是留在 main() 裡）是為了讓 CLI 和 Web 後端
+    共用同一套 orchestration 邏輯——main() 只負責解析 argv，實際
+    「跑哪些模組、怎麼串」的邏輯只在這裡寫一份，不會有兩份程式碼
+    要同步維護、容易兜不起來的風險。
+
+    output_root 預設是相對路徑 "output"（沿用 CLI 一直以來的行為，
+    在執行當下的工作目錄底下建立）；Web 後端呼叫時應該傳入絕對路徑，
+    避免輸出資料夾的位置跟著伺服器啟動時的工作目錄跑，導致跟 CLI
+    產生的 output/ 分散在不同地方。
+
+    回傳 dict 包含 run_dir/combined_json/findings/report_path/pdf_path，
+    Web 後端可以直接用這些路徑產生下載連結，不需要重新解析 stdout。
+    """
+    if not (ip or firmware or url):
+        raise ValueError("至少要提供 ip、firmware、url 其中一個目標")
+
+    # 在任何模組開始寫檔之前，先建立本次執行專屬的資料夾，並切換
+    # common.get_output_dir()，讓 nmap_scan/firmware_scan/zap_scan/report
+    # 這些模組接下來呼叫 get_output_dir() 拿到的都是這個新路徑——
+    # 不需要逐一傳參數給每個模組，因為它們都是在「呼叫的當下」才去
+    # 讀取路徑，而不是在 import 當下就把路徑寫死。
+    run_ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    base_output_dir = output_root if output_root is not None else Path("output")
+    run_dir = set_output_dir(base_output_dir / run_ts)
+    print(f"本次執行輸出資料夾：{run_dir}")
+    print()
+
+    all_findings: list[dict] = []
+
+    if ip:
+        print("==== [1/3] Network scan (nmap) ====")
+        all_findings += run_network_scan(
+            ip, ports=ports, timing=timing,
+            os_detection=os_detection, vuln_scripts=vuln_scripts,
+            scan_technique=scan_technique, host_discovery=host_discovery,
+            script_category=script_category,
+        )
+        print()
+
+    if firmware:
+        print("==== [2/3] Firmware scan (binwalk) ====")
+        all_findings += run_firmware_scan(
+            firmware, extract=extract, matryoshka=matryoshka, run_as_root=run_as_root,
+        )
+        print()
+
+    if url:
+        print("==== [3/3] Web app scan (ZAP) ====")
+        all_findings += run_webapp_scan(url, zap_api_url, active_scan, zap_auto_start)
+        print()
+
+    combined_json = save_findings_json(all_findings, f"combined_{run_ts}")
+
+    print("==== Combined report ====")
+    print(f"Combined JSON saved to: {combined_json}")
+    print_findings(all_findings, empty_message="No findings from any module.")
+
+    result = {
+        "run_dir": str(run_dir),
+        "run_ts": run_ts,
+        "combined_json": combined_json,
+        "findings_count": len(all_findings),
+        "report_path": None,
+        "pdf_path": None,
+    }
+
+    if make_report:
+        scan_metadata = report.build_scan_metadata(
+            operator=operator, ip=ip or "", firmware=firmware or "", url=url or "",
+        )
+        content = report.render_report(all_findings, scan_metadata)
+        # 沿用跟 combined json 相同的時間戳記，方便從報告回溯到是哪次
+        # orchestrator 執行產生的（跟 combined_{run_ts}.json 對應）
+        report_path = report.save_report(content, f"report_{run_ts}")
+        result["report_path"] = report_path
+
+        print()
+        print("==== Report ====")
+        print(f"Report saved to: {report_path}")
+
+        if make_pdf:
+            # PDF 轉換失敗不該讓已經產出的 Markdown 報告白費，
+            # 只印警告並跳過，跟其他選用依賴（ZAP daemon、CWE 知識庫）
+            # 一致的優雅降級原則。
+            if convert_md_to_pdf is None:
+                print("[pdf] Error: md_to_pdf 模組無法載入，略過 PDF 產生。")
+                print("[pdf] 請確認 md_to_pdf/ 資料夾存在，且已安裝 markdown/beautifulsoup4/weasyprint。")
+            else:
+                pdf_path = report_path.replace(".md", ".pdf")
+                try:
+                    convert_md_to_pdf(report_path, pdf_path, title=title, org=org)
+                    result["pdf_path"] = pdf_path
+                except Exception as e:
+                    print(f"[pdf] Error: PDF 轉換失敗（{e}），Markdown 報告仍可正常使用。")
+
+    return result
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="IoT compliance scanner orchestrator (nmap + binwalk + ZAP)"
@@ -138,79 +263,21 @@ def main():
                          help="PDF 報告標題，預設取自報告內文第一個標題（搭配 --pdf 使用）")
     args = parser.parse_args()
 
-    if not (args.ip or args.firmware or args.url):
-        parser.error("至少要提供 --ip、--firmware、--url 其中一個目標")
-
-    # 在任何模組開始寫檔之前，先建立本次執行專屬的資料夾，並切換
-    # common.get_output_dir()，讓 nmap_scan/firmware_scan/zap_scan/report
-    # 這些模組接下來呼叫 get_output_dir() 拿到的都是這個新路徑——
-    # 不需要逐一傳參數給每個模組，因為它們都是在「呼叫的當下」才去
-    # 讀取路徑，而不是在 import 當下就把路徑寫死。
-    run_ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    run_dir = set_output_dir(Path("output") / run_ts)
-    print(f"本次執行輸出資料夾：{run_dir}")
-    print()
-
-    all_findings: list[dict] = []
-
-    if args.ip:
-        print("==== [1/3] Network scan (nmap) ====")
-        all_findings += run_network_scan(
-            args.ip, ports=args.ports, timing=args.timing,
+    try:
+        run_pipeline(
+            ip=args.ip, ports=args.ports, timing=args.timing,
             os_detection=args.os_detection, vuln_scripts=args.vuln_scripts,
             scan_technique=args.scan_technique, host_discovery=args.host_discovery,
             script_category=args.script_category,
-        )
-        print()
-
-    if args.firmware:
-        print("==== [2/3] Firmware scan (binwalk) ====")
-        all_findings += run_firmware_scan(
-            args.firmware, extract=args.extract, matryoshka=args.matryoshka,
+            firmware=args.firmware, extract=args.extract, matryoshka=args.matryoshka,
             run_as_root=args.run_as_root,
+            url=args.url, zap_api_url=args.zap_api_url,
+            active_scan=not args.no_active_scan, zap_auto_start=args.zap_auto_start,
+            make_report=args.report, operator=args.operator,
+            make_pdf=args.pdf, org=args.org, title=args.title,
         )
-        print()
-
-    if args.url:
-        print("==== [3/3] Web app scan (ZAP) ====")
-        all_findings += run_webapp_scan(args.url, args.zap_api_url, not args.no_active_scan, args.zap_auto_start)
-        print()
-
-    combined_json = save_findings_json(all_findings, f"combined_{run_ts}")
-
-    print("==== Combined report ====")
-    print(f"Combined JSON saved to: {combined_json}")
-    print_findings(all_findings, empty_message="No findings from any module.")
-
-    if args.report:
-        scan_metadata = report.build_scan_metadata(
-            operator=args.operator,
-            ip=args.ip or "",
-            firmware=args.firmware or "",
-            url=args.url or "",
-        )
-        content = report.render_report(all_findings, scan_metadata)
-        # 沿用跟 combined json 相同的時間戳記，方便從報告回溯到是哪次
-        # orchestrator 執行產生的（跟 combined_{run_ts}.json 對應）
-        report_path = report.save_report(content, f"report_{run_ts}")
-
-        print()
-        print("==== Report ====")
-        print(f"Report saved to: {report_path}")
-
-        if args.pdf:
-            # PDF 轉換失敗不該讓已經產出的 Markdown 報告白費，
-            # 只印警告並跳過，跟其他選用依賴（ZAP daemon、CWE 知識庫）
-            # 一致的優雅降級原則。
-            if convert_md_to_pdf is None:
-                print("[pdf] Error: md_to_pdf 模組無法載入，略過 PDF 產生。")
-                print("[pdf] 請確認 md_to_pdf/ 資料夾存在，且已安裝 markdown/beautifulsoup4/weasyprint。")
-            else:
-                pdf_path = report_path.replace(".md", ".pdf")
-                try:
-                    convert_md_to_pdf(report_path, pdf_path, title=args.title, org=args.org)
-                except Exception as e:
-                    print(f"[pdf] Error: PDF 轉換失敗（{e}），Markdown 報告仍可正常使用。")
+    except ValueError as e:
+        parser.error(str(e))
 
 
 if __name__ == "__main__":
