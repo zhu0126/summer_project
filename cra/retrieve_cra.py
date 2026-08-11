@@ -17,7 +17,7 @@ try:
     from .build_cra_index import COLLECTION_NAME, EMBEDDING_MODEL, QDRANT_HOST, QDRANT_PORT
 except ImportError:
     # 攤平在同一層的情況，用一般匯入
-    from cra.build_cra_index import COLLECTION_NAME, EMBEDDING_MODEL, QDRANT_HOST, QDRANT_PORT
+    from build_cra_index import COLLECTION_NAME, EMBEDDING_MODEL, QDRANT_HOST, QDRANT_PORT
 
 from fastembed import TextEmbedding
 from qdrant_client import QdrantClient
