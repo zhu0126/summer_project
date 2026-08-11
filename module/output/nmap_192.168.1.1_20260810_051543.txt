@@ -1,0 +1,50 @@
+# Nmap 7.99 scan initiated Mon Aug 10 05:15:43 2026 as: /usr/lib/nmap/nmap --privileged -sV -sS -Pn -T3 --open --script discovery -oX output/nmap_192.168.1.1_20260810_051543.xml -oN output/nmap_192.168.1.1_20260810_051543.txt 192.168.1.1
+Pre-scan script results:
+|_broadcast-pim-discovery: ERROR: Script execution failed (use -d to debug)
+| targets-ipv6-multicast-slaac: 
+|   IP: fe80::32a2:455b:fe1a:b868  MAC: 00:50:56:3a:68:d4  IFACE: eth0
+|_  Use --script-args=newtargets to add the results as targets
+| targets-sniffer: Sniffed 7 address(es). 
+| fe80::6302:69ea:ce80:1319
+| fe80::250:56ff:fe3a:68d4
+| 140.92.164.1
+| 140.92.164.60
+| 52.168.117.169
+| ::
+|_40.104.20.18
+|_broadcast-eigrp-discovery: ERROR: Script execution failed (use -d to debug)
+|_broadcast-igmp-discovery: ERROR: Script execution failed (use -d to debug)
+|_knx-gateway-discover: ERROR: Script execution failed (use -d to debug)
+| ipv6-multicast-mld-list: 
+|   fe80::6302:69ea:ce80:1319: 
+|     device: eth0
+|     mac: dc:71:96:9e:08:a9
+|     multicast_ips: 
+|       ff02::1:ff80:1319         (NDP Solicited-node)
+|       ff02::1:ff1a:b868         (Solicited-Node Address)
+|       ff02::1:ff80:1319         (NDP Solicited-node)
+|       ff02::1:ff80:1319         (NDP Solicited-node)
+|       ff02::1:ff1a:b868         (Solicited-Node Address)
+|       ff02::1:ff1a:b868         (Solicited-Node Address)
+|       ff02::1:ff1a:b868         (Solicited-Node Address)
+|       ff02::1:ff1a:b868         (Solicited-Node Address)
+|       ff02::1:ff1a:b868         (Solicited-Node Address)
+|       ff02::1:ff80:1319         (NDP Solicited-node)
+|       ff02::1:ff80:1319         (NDP Solicited-node)
+|       ff02::1:ff1a:b868         (Solicited-Node Address)
+|       ff02::1:ff80:1319         (NDP Solicited-node)
+|_      ff02::1:ff1a:b868         (Solicited-Node Address)
+|_mrinfo: ERROR: Script execution failed (use -d to debug)
+| targets-ipv6-multicast-mld: 
+|   IP: fe80::6302:69ea:ce80:1319  MAC: 00:50:56:3a:68:d4  IFACE: eth0
+| 
+|_  Use --script-args=newtargets to add the results as targets
+|_http-robtex-shared-ns: *TEMPORARILY DISABLED* due to changes in Robtex's API. See https://www.robtex.com/api/
+| targets-asn: 
+|_  targets-asn.asn is a mandatory parameter
+|_broadcast-ospf2-discover: ERROR: Script execution failed (use -d to debug)
+|_hostmap-robtex: *TEMPORARILY DISABLED* due to changes in Robtex's API. See https://www.robtex.com/api/
+| broadcast-ping: 
+|   IP: 140.92.164.1  MAC: 70:01:b5:c0:8a:da
+|_  Use --script-args=newtargets to add the results as targets
+# Nmap done at Mon Aug 10 05:15:56 2026 -- 1 IP address (0 hosts up) scanned in 13.11 seconds

@@ -1,0 +1,2 @@
+Command: nmap -sV -Pn -T3 --open -oX output/nmap_127.0.0.1_20260805_211049.xml -oN output/nmap_127.0.0.1_20260805_211049.txt 127.0.0.1
+Return code: 0

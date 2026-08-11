@@ -1,0 +1,18 @@
+[
+  {
+    "finding_id": "7f859b6e999a",
+    "category": "network",
+    "source": "nmap",
+    "target": "127.0.0.1",
+    "severity": "info",
+    "title": "tcp/3000 ppp",
+    "detail": {
+      "protocol": "tcp",
+      "port": "3000",
+      "service": "ppp",
+      "product": "",
+      "version": "",
+      "state": "open"
+    }
+  }
+]

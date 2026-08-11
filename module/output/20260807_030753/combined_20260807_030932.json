@@ -1,0 +1,175 @@
+[
+  {
+    "finding_id": "070e325e4050",
+    "category": "network",
+    "source": "nmap",
+    "target": "192.168.1.1",
+    "severity": "info",
+    "title": "tcp/23 telnet",
+    "detail": {
+      "protocol": "tcp",
+      "port": "23",
+      "service": "telnet",
+      "product": "",
+      "version": "",
+      "state": "open"
+    }
+  },
+  {
+    "finding_id": "6acaa499865a",
+    "category": "network",
+    "source": "nmap",
+    "target": "192.168.1.1",
+    "severity": "info",
+    "title": "tcp/80 http (Asus RT-N10+ WAP http config)",
+    "detail": {
+      "protocol": "tcp",
+      "port": "80",
+      "service": "http",
+      "product": "Asus RT-N10+ WAP http config",
+      "version": "",
+      "state": "open"
+    }
+  },
+  {
+    "finding_id": "6b53db3a7923",
+    "category": "network",
+    "source": "nmap",
+    "target": "192.168.1.1",
+    "severity": "info",
+    "title": "tcp/9998 tcpwrapped",
+    "detail": {
+      "protocol": "tcp",
+      "port": "9998",
+      "service": "tcpwrapped",
+      "product": "",
+      "version": "",
+      "state": "open"
+    }
+  },
+  {
+    "finding_id": "1d6203299127",
+    "category": "network",
+    "source": "nmap",
+    "target": "192.168.1.1",
+    "severity": "info",
+    "title": "tcp/49152 upnp (Portable SDK for UPnP devices 1.3.1)",
+    "detail": {
+      "protocol": "tcp",
+      "port": "49152",
+      "service": "upnp",
+      "product": "Portable SDK for UPnP devices",
+      "version": "1.3.1",
+      "state": "open"
+    }
+  },
+  {
+    "finding_id": "9762d6353a01",
+    "category": "firmware",
+    "source": "binwalk",
+    "target": "FW_RT_N10C1_2032.trx",
+    "severity": "info",
+    "title": "LZMA compressed data, properties: 0x5D, dictionary size: 33554432 bytes, uncompressed size: 5959006 bytes",
+    "detail": {
+      "offset_decimal": 64,
+      "offset_hex": "0x40",
+      "matched_keyword": null
+    }
+  },
+  {
+    "finding_id": "4e1c1abd0f92",
+    "category": "firmware",
+    "source": "binwalk",
+    "target": "FW_RT_N10C1_2032.trx",
+    "severity": "info",
+    "title": "MySQL ISAM index file Version 7",
+    "detail": {
+      "offset_decimal": 1971459,
+      "offset_hex": "0x1E1503",
+      "matched_keyword": null
+    }
+  },
+  {
+    "finding_id": "79145eeb5501",
+    "category": "firmware",
+    "source": "binwalk",
+    "target": "FW_RT_N10C1_2032.trx",
+    "severity": "info",
+    "title": "JBOOT STAG header, image id: 5, timestamp 0x860CB153, image size: 99486104 bytes, image JBOOT checksum: 0x4000, header JBOOT checksum: 0x995B",
+    "detail": {
+      "offset_decimal": 2646903,
+      "offset_hex": "0x286377",
+      "matched_keyword": null
+    }
+  },
+  {
+    "finding_id": "fb67c8d297dc",
+    "category": "webapp",
+    "source": "zap",
+    "target": "http://192.168.1.1/robots.txt",
+    "severity": "info",
+    "title": "Content Security Policy (CSP) Header Not Set",
+    "detail": {
+      "param": "",
+      "description": "Content Security Policy (CSP) is an added layer of security that helps to detect and mitigate certain types of attacks, including Cross Site Scripting (XSS) and data injection attacks. These attacks a",
+      "cweid": "693",
+      "zap_risk": "medium"
+    }
+  },
+  {
+    "finding_id": "16efc6c96f76",
+    "category": "webapp",
+    "source": "zap",
+    "target": "http://192.168.1.1/sitemap.xml",
+    "severity": "info",
+    "title": "Content Security Policy (CSP) Header Not Set",
+    "detail": {
+      "param": "",
+      "description": "Content Security Policy (CSP) is an added layer of security that helps to detect and mitigate certain types of attacks, including Cross Site Scripting (XSS) and data injection attacks. These attacks a",
+      "cweid": "693",
+      "zap_risk": "medium"
+    }
+  },
+  {
+    "finding_id": "cada4e995e99",
+    "category": "webapp",
+    "source": "zap",
+    "target": "http://192.168.1.1",
+    "severity": "info",
+    "title": "Content Security Policy (CSP) Header Not Set",
+    "detail": {
+      "param": "",
+      "description": "Content Security Policy (CSP) is an added layer of security that helps to detect and mitigate certain types of attacks, including Cross Site Scripting (XSS) and data injection attacks. These attacks a",
+      "cweid": "693",
+      "zap_risk": "medium"
+    }
+  },
+  {
+    "finding_id": "4390df37cf08",
+    "category": "webapp",
+    "source": "zap",
+    "target": "http://192.168.1.1",
+    "severity": "info",
+    "title": "Weak Authentication Method",
+    "detail": {
+      "param": "",
+      "description": "HTTP basic or digest authentication has been used over an unsecured connection. The credentials can be read and then reused by someone with access to the network.",
+      "cweid": "326",
+      "zap_risk": "medium"
+    }
+  },
+  {
+    "finding_id": "11c8be617ddc",
+    "category": "webapp",
+    "source": "zap",
+    "target": "http://192.168.1.1",
+    "severity": "info",
+    "title": "HTTP Only Site",
+    "detail": {
+      "param": "",
+      "description": "The site is only served under HTTP and not HTTPS.",
+      "cweid": "311",
+      "zap_risk": "medium"
+    }
+  }
+]

@@ -1,0 +1,41 @@
+[
+  {
+    "finding_id": "14079d479ce7",
+    "category": "firmware",
+    "source": "binwalk",
+    "target": "FW_RT_N10C1_2032.trx",
+    "severity": "info",
+    "title": "LZMA compressed data, properties: 0x5D, dictionary size: 33554432 bytes, uncompressed size: 5959006 bytes",
+    "detail": {
+      "offset_decimal": 64,
+      "offset_hex": "0x40",
+      "matched_keyword": null
+    }
+  },
+  {
+    "finding_id": "92c09fb992d0",
+    "category": "firmware",
+    "source": "binwalk",
+    "target": "FW_RT_N10C1_2032.trx",
+    "severity": "info",
+    "title": "MySQL ISAM index file Version 7",
+    "detail": {
+      "offset_decimal": 1971459,
+      "offset_hex": "0x1E1503",
+      "matched_keyword": null
+    }
+  },
+  {
+    "finding_id": "4f2c523f906c",
+    "category": "firmware",
+    "source": "binwalk",
+    "target": "FW_RT_N10C1_2032.trx",
+    "severity": "info",
+    "title": "JBOOT STAG header, image id: 5, timestamp 0x860CB153, image size: 99486104 bytes, image JBOOT checksum: 0x4000, header JBOOT checksum: 0x995B",
+    "detail": {
+      "offset_decimal": 2646903,
+      "offset_hex": "0x286377",
+      "matched_keyword": null
+    }
+  }
+]

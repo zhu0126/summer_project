@@ -1,0 +1,37 @@
+# Nmap 7.99 scan initiated Wed Jul 15 20:32:49 2026 as: /usr/lib/nmap/nmap -sV -Pn -T3 --open -oX output/nmap_192.168.1.1_20260715_203249.xml -oN output/nmap_192.168.1.1_20260715_203249.txt 192.168.1.1
+Nmap scan report for 192.168.1.1
+Host is up (0.0097s latency).
+Not shown: 995 closed tcp ports (reset)
+PORT      STATE SERVICE    VERSION
+23/tcp    open  telnet
+80/tcp    open  http       Asus RT-N10+ WAP http config
+9998/tcp  open  tcpwrapped
+49152/tcp open  upnp       Portable SDK for UPnP devices 1.3.1 (Linux 2.6.21; UPnP 1.0)
+49153/tcp open  upnp       Portable SDK for UPnP devices 1.3.1 (Linux 2.6.21; UPnP 1.0)
+1 service unrecognized despite returning data. If you know the service/version, please submit the following fingerprint at https://nmap.org/cgi-bin/submit.cgi?new-service :
+SF-Port23-TCP:V=7.99%I=7%D=7/15%Time=6A5826B8%P=x86_64-pc-linux-gnu%r(NULL
+SF:,21,"\xff\xfd\x01\xff\xfd\x1f\xff\xfd!\xff\xfb\x01\xff\xfb\x03\r\r\nRT-
+SF:N10\+\x20login:\x20")%r(GenericLines,43,"\xff\xfd\x01\xff\xfd\x1f\xff\x
+SF:fd!\xff\xfb\x01\xff\xfb\x03\r\r\nRT-N10\+\x20login:\x20\r\n\r\nRT-N10\+
+SF:\x20login:\x20RT-N10\+\x20login:\x20")%r(tn3270,32,"\xff\xfd\x01\xff\xf
+SF:d\x1f\xff\xfd!\xff\xfb\x01\xff\xfb\x03\r\r\n\^@IBM-3279-4-E\xfb\^YRT-N1
+SF:0\+\x20login:\x20")%r(GetRequest,33,"\xff\xfd\x01\xff\xfd\x1f\xff\xfd!\
+SF:xff\xfb\x01\xff\xfb\x03\r\r\nGET\x20/\x20HTTP/1\.0\r\n\r\nRT-N10\+\x20l
+SF:ogin:\x20")%r(RPCCheck,1C,"\xff\xfd\x01\xff\xfd\x1f\xff\xfd!\xff\xfb\x0
+SF:1\xff\xfb\x03\r\r\n\x80\^@\^@\(r\xfe\^\]")%r(Help,27,"\xff\xfd\x01\xff\
+SF:xfd\x1f\xff\xfd!\xff\xfb\x01\xff\xfb\x03\r\r\nHELP\r\nRT-N10\+\x20login
+SF::\x20")%r(SIPOptions,100,"\xff\xfd\x01\xff\xfd\x1f\xff\xfd!\xff\xfb\x01
+SF:\xff\xfb\x03OPTIONS\x20sip:nm\x20SIP/2\.0\r\nVia:\x20SIP/2\.0/TCP\x20nm
+SF:;branch=foo\r\nFrom:\x20<sip:nm@nm>;tag=root\r\nTo:\x20<sip:nm2@nm2>\r\
+SF:nCall-ID:\x2050000\r\nCSeq:\x2042\x20OPTIONS\r\nMax-Forwards:\x2070\r\n
+SF:Content-Length:\x200\r\nContact:\x20<sip:nm@nm>\r\nAccept:\x20applicati
+SF:on/sdp\r\n\r\n\r\r\nRT-N10\+\x20login:\x20")%r(NCP,5B,"\xff\xfd\x01\xff
+SF:\xfd\x1f\xff\xfd!\xff\xfb\x01\xff\xfb\x03\r\r\nRT-N10\+\x20login:\x20Dm
+SF:dT\^@\^@\^@\x08\x20\x08\x08\x20\x08\x08\x20\x08\x08\x20\x08\x08\x20\x08
+SF:\x08\x20\x08\x08\x20\x08\x08\x20\x08\x08\x20\x08\x08\x20\x08\^@\^@\^@\^
+SF:A\^@\^@\^@\^@\^@");
+MAC Address: 54:04:A6:E7:2B:5C (ASUSTek Computer)
+Service Info: OS: Linux; Device: WAP; CPE: cpe:/h:asus:rt-n10%2B, cpe:/o:linux:linux_kernel:2.6.21
+
+Service detection performed. Please report any incorrect results at https://nmap.org/submit/ .
+# Nmap done at Wed Jul 15 20:33:36 2026 -- 1 IP address (1 host up) scanned in 47.46 seconds
