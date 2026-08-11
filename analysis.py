@@ -30,6 +30,7 @@ except ImportError:
         from retrieve_cwe import retrieve_cwe
     except ImportError:
         retrieve_cwe = None
+        print("[analysis] 警告：cwe_kb 無法匯入，CWE RAG 路徑停用（規則沒比對到時會直接落到 needs_review）")
 
 try:
     from cra_kb.retrieve_cra import retrieve_cra
@@ -38,6 +39,7 @@ except ImportError:
         from retrieve_cra import retrieve_cra
     except ImportError:
         retrieve_cra = None
+        print("[analysis] 警告：cra_kb 無法匯入，CRA RAG 補強路徑停用（cra_reference 不會被自動補上）")
 
 # 語意檢索分數低於這個門檻，不採用，直接標記 needs_review，
 # 避免把「語意上勉強相關」的結果當成可信的判讀結果呈現出去。
@@ -55,6 +57,37 @@ CRA_CONFIDENCE_THRESHOLD = 0.5
 RAG_DEFAULT_RISK_LEVEL = "medium"
 
 
+def _build_rag_query(finding: dict) -> str:
+    """
+    RAG 查詢用的文字，不要直接拿 finding['title'] 那種帶 port/protocol
+    格式的字串去查（例如 network 類別的 title 長得像 "tcp/6379 redis"）。
+    這種格式混雜了協定名稱、port 數字這些對語意檢索沒有幫助的雜訊，
+    會稀釋掉真正有意義的關鍵字（"redis"），拉低跟 CWE/CRA 描述文字
+    （通常是完整英文敘述句）的向量相似度分數。
+
+    改成依 category 組一段更接近自然語言的描述：
+    - network：用 service（+product/version，如果有）組成 "xxx service"
+      這種描述，不帶 protocol/port 數字
+    - firmware/webapp：title 本身已經是描述性文字（例如 binwalk 的
+      訊號描述、ZAP 的 alert 名稱），直接沿用即可
+    """
+    category = finding.get("category")
+    detail = finding.get("detail", {})
+
+    if category == "network":
+        service = detail.get("service") or finding["title"]
+        parts = [f"{service} service"]
+        product = detail.get("product", "")
+        version = detail.get("version", "")
+        if product:
+            parts.append(product)
+        if version:
+            parts.append(version)
+        return " ".join(parts)
+
+    return finding["title"]
+
+
 def _rag_lookup(finding: dict) -> dict | None:
     """
     嘗試用 RAG 查詢，任何失敗（模組不存在、Qdrant 連不上、collection
@@ -65,7 +98,7 @@ def _rag_lookup(finding: dict) -> dict | None:
         return None
 
     try:
-        candidates = retrieve_cwe(finding["title"], top_k=1)
+        candidates = retrieve_cwe(_build_rag_query(finding), top_k=1)
     except Exception as e:
         print(f"[analysis] RAG 查詢失敗，略過此路徑（{e}）")
         return None
@@ -93,7 +126,7 @@ def _cra_lookup(finding: dict) -> dict | None:
         return None
 
     try:
-        candidates = retrieve_cra(finding["title"], top_k=1)
+        candidates = retrieve_cra(_build_rag_query(finding), top_k=1)
     except Exception as e:
         print(f"[analysis] CRA RAG 查詢失敗，略過此路徑（{e}）")
         return None
