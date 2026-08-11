@@ -1,0 +1,2 @@
+Command: nmap -sV -Pn -T3 --open -p 22,80,443 -O --script discovery -oX /home/kali/summer_project/output/20260811_022144/nmap_192.168.20.0_24_20260811_022144.xml -oN /home/kali/summer_project/output/20260811_022144/nmap_192.168.20.0_24_20260811_022144.txt 192.168.20.0/24
+Return code: 0

@@ -23,11 +23,18 @@ TEMPLATE_DIR = Path(__file__).parent / "templates"
 TEMPLATE_NAME = "report.md.j2"
 
 
-def build_scan_metadata(scope: str, operator: str = "unknown") -> dict:
+def build_scan_metadata(operator: str = "unknown", ip: str = "", firmware: str = "", url: str = "") -> dict:
+    """
+    scope 拆成 ip/firmware/url 三個獨立欄位，而不是一個合併字串，
+    對應樣板裡「掃描範圍要分行呈現」的需求——IP、韌體、URL 各自
+    是完全不同性質的掃描對象，混在同一行閱讀時不容易分辨。
+    """
     return {
         "scan_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "scope": scope,
         "operator": operator,
+        "ip": ip,
+        "firmware": firmware,
+        "url": url,
     }
 
 
@@ -51,9 +58,26 @@ def merge_findings_and_analysis(findings: list[dict], analysis_results: list[dic
     return merged
 
 
+def group_by_target(merged_findings: list[dict]) -> list[dict]:
+    """
+    把 findings 依 target 分組，讓 Findings 章節能用「target 當標題、
+    底下列出該目標的所有項目」的方式呈現，不用在每一行都重複印一次
+    target——三個掃描目標（IP/firmware/URL）各自可能產生好幾筆
+    finding，攤平列表時 target 欄位會重複很多次，分組後可讀性更好。
+    保留 target 第一次出現的順序（不重新排序），對應原本 findings
+    出現的先後。
+    """
+    groups: dict[str, list[dict]] = {}
+    for item in merged_findings:
+        groups.setdefault(item["target"], []).append(item)
+
+    return [{"target": target, "findings": items} for target, items in groups.items()]
+
+
 def render_report(findings: list[dict], scan_metadata: dict) -> str:
     analysis_results = analyze_findings(findings)
     merged_findings = merge_findings_and_analysis(findings, analysis_results)
+    finding_groups = group_by_target(merged_findings)
 
     env = Environment(
         loader=FileSystemLoader(str(TEMPLATE_DIR)),
@@ -65,6 +89,7 @@ def render_report(findings: list[dict], scan_metadata: dict) -> str:
     return template.render(
         scan_metadata=scan_metadata,
         merged_findings=merged_findings,
+        finding_groups=finding_groups,
     )
 
 
@@ -74,17 +99,22 @@ def save_report(content: str, base_name: str) -> str:
     return str(report_path)
 
 
-def infer_scope(findings: list[dict]) -> str:
+def infer_scope(findings: list[dict]) -> dict:
     """
-    沒有手動指定 --scope 時，從 findings 的 target 欄位自動推導。
-    json 檔案本身沒有存「這次掃描的整體範圍」這個後設資訊
-    （只有每筆 finding 各自的 target），用這個函式從資料反推，
-    避免每次獨立執行 report.py 都要手動重打一次範圍描述。
+    獨立執行 report.py 時（讀既有 json，沒有明確的 --ip/--firmware/--url
+    參數可用），依 finding 的 category 分桶推導出各自的目標描述：
+    network -> ip，firmware -> firmware，webapp -> url。
+    同一類別若有多個目標，用逗號接起來。
     """
-    targets = sorted({f["target"] for f in findings if f.get("target")})
-    if not targets:
-        return "unknown"
-    return ", ".join(targets)
+    buckets: dict[str, set] = {"ip": set(), "firmware": set(), "url": set()}
+    category_to_bucket = {"network": "ip", "firmware": "firmware", "webapp": "url"}
+
+    for f in findings:
+        bucket = category_to_bucket.get(f.get("category"))
+        if bucket and f.get("target"):
+            buckets[bucket].add(f["target"])
+
+    return {key: ", ".join(sorted(values)) for key, values in buckets.items()}
 
 
 def main():
@@ -103,8 +133,6 @@ def main():
         description="Render a Markdown report from an existing findings json file"
     )
     parser.add_argument("findings_json", help="Path to a findings json file (from nmap_scan/firmware_scan/zap_scan/project.py)")
-    parser.add_argument("--scope", default=None,
-                         help="Scan scope description. 不給的話會從 findings 的 target 欄位自動推導")
     parser.add_argument("--operator", default="unknown", help="Who ran this scan")
     args = parser.parse_args()
 
@@ -114,8 +142,8 @@ def main():
         sys.exit(1)
 
     findings = json.loads(findings_path.read_text(encoding="utf-8"))
-    scope = args.scope if args.scope is not None else infer_scope(findings)
-    scan_metadata = build_scan_metadata(scope=scope, operator=args.operator)
+    scope = infer_scope(findings)
+    scan_metadata = build_scan_metadata(operator=args.operator, **scope)
     content = render_report(findings, scan_metadata)
 
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
