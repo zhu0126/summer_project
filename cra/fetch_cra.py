@@ -135,16 +135,115 @@ def parse_via_regex_fallback(full_text: str) -> list[dict]:
     return articles
 
 
-def parse_cra_html(html_text: str) -> list[dict]:
+# Annex I 裡每個項目標籤的格式：(1)、(2)、(a)、(b)、(i)、(ii) 這種
+# 括號包住的數字/字母/羅馬數字，用來辨識「這個 td 是不是列表標籤」。
+ANNEX_LABEL_PATTERN = re.compile(r"^\([a-zA-Z0-9ivxIVX]+\)$")
+
+
+def extract_annex_items(table, prefix: str = "") -> list[dict]:
+    """
+    Annex I 的技術要求是用巢狀表格表示的清單結構：
+        <table>
+          <tr><td></td><td><p class="oj-normal">(1)</p></td>
+              <td><span>要求內容...</span></td></tr>
+        </table>
+    項目 (2) 底下常常還有子項目 (a)(b)，用「同一個 content_td 裡
+    再巢狀一層 <table>」表示。這裡用遞迴處理任意深度的巢狀，不假設
+    只有兩層——每進一層，label 前綴就疊加一次（例如 "(2)(a)"）。
+
+    只走「這一層」的表格結構，用 table.find("tr") 抓第一列，不用
+    find_all 掃全部子孫節點，避免把子項目的內容重複算進上一層。
+    """
+    items = []
+    row = table.find("tr")
+    if row is None:
+        return items
+
+    cells = row.find_all("td", recursive=False)
+    label = None
+    content_td = None
+    for i, td in enumerate(cells):
+        text = td.get_text(strip=True)
+        if ANNEX_LABEL_PATTERN.match(text):
+            label = text
+            if i + 1 < len(cells):
+                content_td = cells[i + 1]
+            break
+
+    if label is None or content_td is None:
+        return items
+
+    full_label = f"{prefix}{label}"
+
+    # 這個項目「自己的」文字：content_td 底下直接的 <span> 或
+    # <p class="oj-normal">，不含巢狀 <table> 裡子項目的文字
+    # （子項目交給下面的遞迴處理，不要在這裡重複收進來）。
+    own_parts = []
+    for child in content_td.children:
+        name = getattr(child, "name", None)
+        if name == "span":
+            own_parts.append(child.get_text(" ", strip=True))
+        elif name == "p" and "oj-normal" in (child.get("class") or []):
+            own_parts.append(child.get_text(" ", strip=True))
+    own_text = " ".join(p for p in own_parts if p)
+
+    if own_text:
+        items.append({"label": full_label, "text": own_text})
+
+    # 遞迴處理巢狀子項目（如果有的話），子項目的 table 是
+    # content_td 的直接子節點
+    for nested_table in content_td.find_all("table", recursive=False):
+        items.extend(extract_annex_items(nested_table, prefix=full_label))
+
+    return items
+
+
+def parse_annex_i(soup: BeautifulSoup) -> list[dict]:
+    """
+    解析 Annex I（實質技術安全要求，跟 Article 是完全不同的區塊）。
+    Annex I 用 id="anx_I" 的 div 包住整個內容，裡面用
+    class="oj-ti-grseq-1" 標記 Part I / Part II 這種段落標題，
+    段落標題之後接著一連串代表清單項目的 <table>。
+
+    回傳的每一筆帶 part/label/text，跟 Article 的格式（article_no/
+    title/text）不同但欄位語意對應：article_no 對應 "Annex I (label)"，
+    title 對應所屬的 Part 名稱，方便下游（build_cra_index.py）
+    不用特別區分兩種來源，用同一套 schema 處理。
+    """
+    container = soup.find(id="anx_I")
+    if container is None:
+        print("[fetch_cra] 警告：找不到 id=\"anx_I\"，Annex I 內容可能沒有被解析到。")
+        return []
+
+    entries = []
+    current_part = ""
+    for child in container.children:
+        name = getattr(child, "name", None)
+        if name == "p" and "oj-ti-grseq-1" in (child.get("class") or []):
+            current_part = child.get_text(" ", strip=True)
+        elif name == "table":
+            for item in extract_annex_items(child):
+                entries.append({
+                    "article_no": f"Annex I {item['label']}",
+                    "title": current_part,
+                    "text": item["text"],
+                })
+
+    return entries
+
+
+def parse_cra_html(html_text: str) -> tuple[list[dict], list[dict]]:
     soup = BeautifulSoup(html_text, "html.parser")
 
     articles = parse_via_css_classes(soup)
-    if articles:
-        return articles
+    if not articles:
+        print("[fetch_cra] 警告：找不到預期的 oj-ti-art CSS class，"
+              "改用文字規則 fallback 解析（準確度較低，建議人工核對結果）。")
+        articles = parse_via_regex_fallback(soup.get_text("\n"))
 
-    print("[fetch_cra] 警告：找不到預期的 oj-ti-art CSS class，"
-          "改用文字規則 fallback 解析（準確度較低，建議人工核對結果）。")
-    return parse_via_regex_fallback(soup.get_text("\n"))
+    annex_entries = parse_annex_i(soup)
+
+    return articles, annex_entries
 
 
 def build_embedding_text(article: dict) -> str:
@@ -182,24 +281,32 @@ def main():
     print(f"[診斷] 內容包含 'oj-ti-art' 字樣：{'oj-ti-art' in html_text}")
     print(f"[診斷] 內容包含 'Article' 字樣：{'Article' in html_text}")
 
-    articles = parse_cra_html(html_text)
-    for a in articles:
+    articles, annex_entries = parse_cra_html(html_text)
+    all_entries = articles + annex_entries
+    for a in all_entries:
         a["embedding_text"] = build_embedding_text(a)
 
     OUTPUT_PATH.parent.mkdir(exist_ok=True)
     import json
     OUTPUT_PATH.write_text(
-        json.dumps(articles, indent=2, ensure_ascii=False), encoding="utf-8"
+        json.dumps(all_entries, indent=2, ensure_ascii=False), encoding="utf-8"
     )
-    print(f"解析完成，共 {len(articles)} 條，存到 {OUTPUT_PATH}")
+    print(f"解析完成，共 {len(articles)} 條 Article + {len(annex_entries)} 筆 Annex I 項目"
+          f"（合計 {len(all_entries)} 筆），存到 {OUTPUT_PATH}")
 
     if args.verify:
         diff = abs(len(articles) - EXPECTED_ARTICLE_COUNT)
         if diff > 5:
-            print(f"警告：解析出 {len(articles)} 條，跟官方公告的 {EXPECTED_ARTICLE_COUNT} 條"
+            print(f"警告：Article 解析出 {len(articles)} 條，跟官方公告的 {EXPECTED_ARTICLE_COUNT} 條"
                   f"差距達 {diff} 條，建議人工核對 parse_via_css_classes() 的 CSS class 是否需要調整。")
         else:
-            print(f"條文數量核對通過（官方 {EXPECTED_ARTICLE_COUNT} 條，解析出 {len(articles)} 條）。")
+            print(f"Article 數量核對通過（官方 {EXPECTED_ARTICLE_COUNT} 條，解析出 {len(articles)} 條）。")
+
+        if annex_entries:
+            print(f"Annex I 解析出 {len(annex_entries)} 筆項目，"
+                  f"建議抽查幾筆 embedding_text 內容確認標籤跟文字對得起來。")
+        else:
+            print("警告：Annex I 沒有解析出任何項目，請檢查 raw_page.html 裡 id=\"anx_I\" 的結構。")
 
 
 if __name__ == "__main__":
