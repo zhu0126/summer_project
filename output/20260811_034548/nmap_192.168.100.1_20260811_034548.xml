@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE nmaprun>
+<?xml-stylesheet href="file:///usr/share/nmap/nmap.xsl" type="text/xsl"?>
+<!-- Nmap 7.99 scan initiated Tue Aug 11 03:45:48 2026 as: /usr/lib/nmap/nmap -&#45;privileged -sV -Pn -T4 -&#45;open -p 1-1000 -oX /home/kali/summer_project/output/20260811_034548/nmap_192.168.100.1_20260811_034548.xml -oN /home/kali/summer_project/output/20260811_034548/nmap_192.168.100.1_20260811_034548.txt 192.168.100.1 -->
+<nmaprun scanner="nmap" args="/usr/lib/nmap/nmap -&#45;privileged -sV -Pn -T4 -&#45;open -p 1-1000 -oX /home/kali/summer_project/output/20260811_034548/nmap_192.168.100.1_20260811_034548.xml -oN /home/kali/summer_project/output/20260811_034548/nmap_192.168.100.1_20260811_034548.txt 192.168.100.1" start="1786434348" startstr="Tue Aug 11 03:45:48 2026" version="7.99" xmloutputversion="1.05">
+<scaninfo type="syn" protocol="tcp" numservices="1000" services="1-1000"/>
+<verbose level="0"/>
+<debugging level="0"/>
+<runstats><finished time="1786434357" timestr="Tue Aug 11 03:45:57 2026" summary="Nmap done at Tue Aug 11 03:45:57 2026; 1 IP address (1 host up) scanned in 9.40 seconds" elapsed="9.40" exit="success"/><hosts up="1" down="0" total="1"/>
+</runstats>
+</nmaprun>

@@ -1,0 +1,3 @@
+# Nmap 7.99 scan initiated Tue Aug 11 03:44:18 2026 as: /usr/lib/nmap/nmap --privileged -sV -Pn -T4 --open -p 1-1000 -oX /home/kali/summer_project/output/20260811_034418/nmap_192.168.100.1_20260811_034418.xml -oN /home/kali/summer_project/output/20260811_034418/nmap_192.168.100.1_20260811_034418.txt 192.168.100.1
+Service detection performed. Please report any incorrect results at https://nmap.org/submit/ .
+# Nmap done at Tue Aug 11 03:44:28 2026 -- 1 IP address (1 host up) scanned in 9.63 seconds
