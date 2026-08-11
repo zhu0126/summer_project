@@ -119,7 +119,7 @@ def print_analysis(analysis_results: list[dict]) -> None:
 
 if __name__ == "__main__":
     # 快速手動測試：用假的 finding 資料檢查比對邏輯是否正確
-    from module.common import make_finding
+    from common import make_finding
 
     sample_findings = [
         make_finding("network", "nmap", "192.168.1.20", "info", "tcp/23 telnet",
