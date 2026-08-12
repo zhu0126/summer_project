@@ -16,12 +16,28 @@ retrieve_cra()：純向量語意檢索，保留當作 debug/對照用。
 retrieve_cra_hybrid()：向量檢索 + BM25 關鍵字檢索合併（RRF），
 正式流程建議使用這一版，理由跟 retrieve_cwe.py 一致。
 """
-import sys
+import importlib.util
 from pathlib import Path
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
-if str(_PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(_PROJECT_ROOT))
+_HYBRID_SEARCH_PATH = _PROJECT_ROOT / "hybrid_search.py"
+
+
+def _load_hybrid_search():
+    """跟 cwe_kb/retrieve_cwe.py 的 _load_hybrid_search() 邏輯一致，
+    直接照絕對路徑載入，不依賴 sys.path 搜尋順序。"""
+    if not _HYBRID_SEARCH_PATH.is_file():
+        print(f"[retrieve_cra] 警告：找不到 {_HYBRID_SEARCH_PATH}")
+        return None, None, None
+    try:
+        spec = importlib.util.spec_from_file_location("hybrid_search", _HYBRID_SEARCH_PATH)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module.build_bm25_index, module.reciprocal_rank_fusion, module.tokenize
+    except Exception as e:
+        print(f"[retrieve_cra] 警告：載入 {_HYBRID_SEARCH_PATH} 失敗（{e}）")
+        return None, None, None
+
 
 try:
     # cra_kb 是子資料夾（package）的情況，用相對匯入
@@ -30,10 +46,7 @@ except ImportError:
     # 攤平在同一層的情況，用一般匯入
     from build_cra_index import COLLECTION_NAME, EMBEDDING_MODEL, QDRANT_HOST, QDRANT_PORT
 
-try:
-    from hybrid_search import build_bm25_index, reciprocal_rank_fusion, tokenize
-except ImportError:
-    build_bm25_index = reciprocal_rank_fusion = tokenize = None
+build_bm25_index, reciprocal_rank_fusion, tokenize = _load_hybrid_search()
 
 from fastembed import TextEmbedding
 from qdrant_client import QdrantClient
