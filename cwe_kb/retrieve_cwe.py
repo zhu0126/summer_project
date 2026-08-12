@@ -157,6 +157,17 @@ def retrieve_cwe_hybrid(query_text: str, top_k: int = 3, candidate_k: int = 10) 
 
     dense_ids = [r["cwe_id"] for r in dense_results]
     sparse_ids = [r["cwe_id"] for r in sparse_results]
+
+    # reciprocal_rank_fusion 本身也可能是 None（hybrid_search.py 整個
+    # 匯入失敗時，見檔案開頭的 try/except）——這是先前的漏洞：只保護了
+    # _bm25_search 那一段，卻沒保護緊接著呼叫 reciprocal_rank_fusion
+    # 這一步，一旦匯入失敗就會撞上 "'NoneType' object is not callable"
+    # 這種看起來莫名其妙的錯誤。這裡補上防護：沒有 RRF 可用時，直接
+    # 退化成只用 dense 排名（sparse 那份候選就不合併了），不要整個掛掉。
+    if reciprocal_rank_fusion is None:
+        print("[retrieve_cwe] hybrid_search 不可用，退化為 dense-only 排名")
+        return [{**r, "matched_by": ["dense"]} for r in dense_results[:top_k]]
+
     fused_scores = reciprocal_rank_fusion([dense_ids, sparse_ids])
 
     dense_set = set(dense_ids)

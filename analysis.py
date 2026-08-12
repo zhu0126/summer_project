@@ -51,7 +51,7 @@ except ImportError:
 # 每個知識庫各給幾筆候選——不做信心分數過濾（實測證明單一門檻無法
 # 區分雜訊跟真訊號），改成把前幾名都列出來，交給人腦判斷，而不是
 # 假裝系統能自動篩出「唯一正確答案」。
-RAG_SUGGESTION_TOP_K = 3
+RAG_SUGGESTION_TOP_K = 5
 
 
 def _build_rag_query(finding: dict) -> str:
