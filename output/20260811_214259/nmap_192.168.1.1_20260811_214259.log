@@ -1,0 +1,2 @@
+Command: nmap -sV -Pn -T3 --open -oX output/20260811_214259/nmap_192.168.1.1_20260811_214259.xml -oN output/20260811_214259/nmap_192.168.1.1_20260811_214259.txt 192.168.1.1
+Return code: 0
