@@ -20,15 +20,35 @@ retrieve_cwe_hybrid()：向量檢索（dense）+ BM25 關鍵字檢索（sparse�
 finding 標題含有 "authentication"、"encryption" 這類字眼），BM25
 能直接命中，dense 檢索則負責抓語意上相關但用詞不同的內容，兩者互補。
 """
-import sys
+import importlib.util
 from pathlib import Path
 
-# 確保不管是「從專案根目錄呼叫」還是「cd 進 cwe_kb 單獨測試」，都能
-# 找到專案根目錄的 hybrid_search.py——後者的情況下 cwe_kb/ 本身
-# 不會自動把上一層目錄加進搜尋路徑。
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
-if str(_PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(_PROJECT_ROOT))
+_HYBRID_SEARCH_PATH = _PROJECT_ROOT / "hybrid_search.py"
+
+
+def _load_hybrid_search():
+    """
+    直接照絕對檔案路徑載入 hybrid_search.py，不透過 sys.path 搜尋。
+    改用這個方式是因為原本 sys.path.insert() + import 的組合，在
+    「透過 analysis.py 這種套件式匯入」跟「直接執行/單獨測試」兩種
+    情境下，sys.path 的搜尋時機跟順序有微妙差異，實測發現會出現
+    「獨立測試匯入成功，但透過模組呼叫卻失敗」這種難以排查的落差。
+    用 importlib 照絕對路徑直接載入，完全不依賴 sys.path 現在長怎樣，
+    行為在任何呼叫情境下都一致。
+    """
+    if not _HYBRID_SEARCH_PATH.is_file():
+        print(f"[retrieve_cwe] 警告：找不到 {_HYBRID_SEARCH_PATH}")
+        return None, None, None
+    try:
+        spec = importlib.util.spec_from_file_location("hybrid_search", _HYBRID_SEARCH_PATH)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module.build_bm25_index, module.reciprocal_rank_fusion, module.tokenize
+    except Exception as e:
+        print(f"[retrieve_cwe] 警告：載入 {_HYBRID_SEARCH_PATH} 失敗（{e}）")
+        return None, None, None
+
 
 try:
     # cwe_kb 是子資料夾（package）的情況，用相對匯入
@@ -37,10 +57,7 @@ except ImportError:
     # 攤平在同一層的情況，用一般匯入
     from build_cwe_index import COLLECTION_NAME, EMBEDDING_MODEL, QDRANT_HOST, QDRANT_PORT
 
-try:
-    from hybrid_search import build_bm25_index, reciprocal_rank_fusion, tokenize
-except ImportError:
-    build_bm25_index = reciprocal_rank_fusion = tokenize = None
+build_bm25_index, reciprocal_rank_fusion, tokenize = _load_hybrid_search()
 
 from fastembed import TextEmbedding
 from qdrant_client import QdrantClient
