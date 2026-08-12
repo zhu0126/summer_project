@@ -1,7 +1,0 @@
-
-DECIMAL       HEXADECIMAL     DESCRIPTION
---------------------------------------------------------------------------------
-64            0x40            LZMA compressed data, properties: 0x5D, dictionary size: 33554432 bytes, uncompressed size: 5959006 bytes
-1971459       0x1E1503        MySQL ISAM index file Version 7
-2646903       0x286377        JBOOT STAG header, image id: 5, timestamp 0x860CB153, image size: 99486104 bytes, image JBOOT checksum: 0x4000, header JBOOT checksum: 0x995B
-

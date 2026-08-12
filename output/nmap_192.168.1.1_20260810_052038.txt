@@ -1,2 +1,0 @@
-# Nmap 7.99 scan initiated Mon Aug 10 05:20:38 2026 as: /usr/lib/nmap/nmap --privileged -sV -sU -Pn -T3 --open -oX output/nmap_192.168.1.1_20260810_052038.xml -oN output/nmap_192.168.1.1_20260810_052038.txt 192.168.1.1
-# Nmap done at Mon Aug 10 05:20:39 2026 -- 1 IP address (0 hosts up) scanned in 1.57 seconds

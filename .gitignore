@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# 執行期產生的掃描結果/報告（每次跑測試都會新增，不該進版控）
+output/*
+!output/.gitkeep
+
+# Web 後端暫存上傳的韌體檔案
+webapp/backend/uploads/
+
+# md_to_pdf.py 執行後產生的範例輸出
+md_to_pdf/report_*.md
+md_to_pdf/report_*.pdf

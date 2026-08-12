@@ -20,7 +20,7 @@ import importlib.util
 from pathlib import Path
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
-_HYBRID_SEARCH_PATH = _PROJECT_ROOT / "hybrid_search.py"
+_HYBRID_SEARCH_PATH = _PROJECT_ROOT / "core" / "hybrid_search.py"
 
 
 def _load_hybrid_search():
@@ -77,7 +77,7 @@ def _get_bm25():
     global _bm25_index, _bm25_entries
     if _bm25_index is None:
         if build_bm25_index is None:
-            raise ImportError("hybrid_search 無法匯入，請確認 hybrid_search.py 存在於專案根目錄")
+            raise ImportError("hybrid_search 無法匯入，請確認 core/hybrid_search.py 存在")
         _bm25_index, _bm25_entries = build_bm25_index(CRA_DATA_PATH)
     return _bm25_index, _bm25_entries
 

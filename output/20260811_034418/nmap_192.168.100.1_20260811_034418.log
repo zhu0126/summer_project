@@ -1,2 +1,0 @@
-Command: nmap -sV -Pn -T4 --open -p 1-1000 -oX /home/kali/summer_project/output/20260811_034418/nmap_192.168.100.1_20260811_034418.xml -oN /home/kali/summer_project/output/20260811_034418/nmap_192.168.100.1_20260811_034418.txt 192.168.100.1
-Return code: 0

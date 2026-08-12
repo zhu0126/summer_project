@@ -151,14 +151,22 @@ def parse_via_regex_fallback(full_text: str) -> list[dict]:
     return articles
 
 
-# Annex I 裡每個項目標籤的格式：(1)、(2)、(a)、(b)、(i)、(ii) 這種
-# 括號包住的數字/字母/羅馬數字，用來辨識「這個 td 是不是列表標籤」。
-ANNEX_LABEL_PATTERN = re.compile(r"^\([a-zA-Z0-9ivxIVX]+\)$")
+# Annex 清單項目的標籤格式，八個 Annex 混用兩種風格，都要能辨識：
+# - 括號包住的數字/字母/羅馬數字，如 (1)、(a)、(i)（Annex I/III/VII/VIII 用）
+# - 句點結尾的數字（含小數點分層），如 1.、3.、3.1.（Annex II/III/V/VII/VIII 用）
+ANNEX_LABEL_PATTERN = re.compile(r"^(\([a-zA-Z0-9ivxIVX]+\)|[0-9]+(?:\.[0-9]+)*\.)$")
+
+# Annex 內部再分段的標題格式，如 "Part I ..."、"Part II ..."、"Class I"。
+# 用來在 article_no 裡帶入分段前綴，避免不同段落各自從 (1) 重新編號時
+# 產生同名的 article_no（例如 Annex I Part I 跟 Part II 都有一個 "(1)"）。
+ANNEX_PART_PATTERN = re.compile(r"^(Part|Class)\s+[IVXLC]+")
+
+ANNEX_NUMBERS = ["I", "II", "III", "IV", "V", "VI", "VII", "VIII"]
 
 
 def extract_annex_items(table, prefix: str = "") -> list[dict]:
     """
-    Annex I 的技術要求是用巢狀表格表示的清單結構：
+    多數 Annex 的技術要求是用巢狀表格表示的清單結構：
         <table>
           <tr><td></td><td><p class="oj-normal">(1)</p></td>
               <td><span>要求內容...</span></td></tr>
@@ -214,38 +222,104 @@ def extract_annex_items(table, prefix: str = "") -> list[dict]:
     return items
 
 
-def parse_annex_i(soup: BeautifulSoup) -> list[dict]:
+def parse_annex_table_based(container, annex_no: str) -> list[dict]:
     """
-    解析 Annex I（實質技術安全要求，跟 Article 是完全不同的區塊）。
-    Annex I 用 id="anx_I" 的 div 包住整個內容，裡面用
-    class="oj-ti-grseq-1" 標記 Part I / Part II 這種段落標題，
-    段落標題之後接著一連串代表清單項目的 <table>。
+    解析用巢狀表格清單表示技術要求的 Annex（I/II/III/V/VI/VII/VIII 都是
+    這種結構）。容器內用 class="oj-ti-grseq-1" 標記 Part I / Part II /
+    Class I 這種段落標題，段落標題之後接著一連串代表清單項目的 <table>。
 
-    回傳的每一筆帶 part/label/text，跟 Article 的格式（article_no/
-    title/text）不同但欄位語意對應：article_no 對應 "Annex I (label)"，
-    title 對應所屬的 Part 名稱，方便下游（build_cra_index.py）
-    不用特別區分兩種來源，用同一套 schema 處理。
+    已修正的 bug：原本（parse_annex_i）只處理 Annex I，而且沒有把
+    Part 標題帶進 article_no，導致 Annex I Part I 跟 Part II 各自從
+    (1) 重新編號、彼此撞號（見 CHANGELOG／issue 討論）。這裡改成
+    只要偵測到目前段落標題符合 "Part <羅馬數字>" 或 "Class <羅馬數字>"
+    格式，就把這個短前綴一併放進 article_no，同一份 Annex 底下不同
+    Part/Class 就算數字重新從 1 開始編號也不會撞號。
+
+    另外有些表格本身沒有編號標籤（例如 Annex VI 的 EU 符合性聲明
+    範本文字，格式是純段落，不是清單），extract_annex_items() 對這種
+    表格會回傳空 list——這裡改成退回「整張表當一筆項目，用出現順序編號」，
+    避免這類內容被靜默漏掉整個消失在知識庫裡。
     """
-    container = soup.find(id="anx_I")
-    if container is None:
-        print("[fetch_cra] 警告：找不到 id=\"anx_I\"，Annex I 內容可能沒有被解析到。")
-        return []
-
     entries = []
     current_part = ""
+    fallback_counter = 0
     for child in container.children:
         name = getattr(child, "name", None)
         if name == "p" and "oj-ti-grseq-1" in (child.get("class") or []):
             current_part = child.get_text(" ", strip=True)
+            fallback_counter = 0
         elif name == "table":
-            for item in extract_annex_items(child):
+            items = extract_annex_items(child)
+            if not items:
+                fallback_counter += 1
+                text = child.get_text(" ", strip=True)
+                if text:
+                    items = [{"label": str(fallback_counter), "text": text}]
+
+            part_match = ANNEX_PART_PATTERN.match(current_part)
+            part_prefix = f"{part_match.group(0)} " if part_match else ""
+
+            for item in items:
                 entries.append({
-                    "article_no": f"Annex I {item['label']}",
+                    "article_no": f"Annex {annex_no} {part_prefix}{item['label']}",
                     "title": current_part,
                     "text": item["text"],
                 })
 
     return entries
+
+
+def parse_annex_iv(container, annex_no: str) -> list[dict]:
+    """
+    Annex IV（CRITICAL PRODUCTS WITH DIGITAL ELEMENTS）不是表格清單，
+    是一連串 <div class="oj-enumeration-spacing">，每個 div 裡兩個
+    <p style="display: inline;">：第一個是 "1.   " 這種純數字標籤，
+    第二個包著 <span> 裝實際文字。結構跟其他 Annex 的巢狀表格完全不同，
+    需要獨立處理，不能沿用 extract_annex_items()。
+    """
+    entries = []
+    for div in container.find_all("div", class_="oj-enumeration-spacing", recursive=False):
+        ps = div.find_all("p", recursive=False)
+        if not ps:
+            continue
+        label_match = re.match(r"^([0-9]+)", ps[0].get_text(strip=True))
+        if label_match is None:
+            continue
+        label = label_match.group(1)
+        body_text = " ".join(p.get_text(" ", strip=True) for p in ps[1:]).strip()
+        if body_text:
+            entries.append({
+                "article_no": f"Annex {annex_no} ({label})",
+                "title": "",
+                "text": body_text,
+            })
+
+    return entries
+
+
+def parse_all_annexes(soup: BeautifulSoup) -> list[dict]:
+    """
+    依序解析 Annex I ~ VIII（CRA 官方公告的 Annex 總數），不是只有
+    Annex I。找不到某個 Annex 的容器時印警告並跳過，不讓整個解析中斷——
+    理由跟 Article fallback 一致：讓使用者知道「這個 Annex 沒解析到」，
+    而不是安靜地少了一塊卻毫無提示。
+    """
+    all_entries = []
+    for roman in ANNEX_NUMBERS:
+        container = soup.find(id=f"anx_{roman}")
+        if container is None:
+            print(f"[fetch_cra] 警告：找不到 id=\"anx_{roman}\"，Annex {roman} 內容可能沒有被解析到。")
+            continue
+
+        if roman == "IV":
+            entries = parse_annex_iv(container, roman)
+        else:
+            entries = parse_annex_table_based(container, roman)
+
+        print(f"[fetch_cra]   Annex {roman}：解析出 {len(entries)} 筆項目")
+        all_entries.extend(entries)
+
+    return all_entries
 
 
 def parse_cra_html(html_text: str) -> tuple[list[dict], list[dict]]:
@@ -257,7 +331,7 @@ def parse_cra_html(html_text: str) -> tuple[list[dict], list[dict]]:
               "改用文字規則 fallback 解析（準確度較低，建議人工核對結果）。")
         articles = parse_via_regex_fallback(soup.get_text("\n"))
 
-    annex_entries = parse_annex_i(soup)
+    annex_entries = parse_all_annexes(soup)
 
     return articles, annex_entries
 
@@ -307,7 +381,7 @@ def main():
     OUTPUT_PATH.write_text(
         json.dumps(all_entries, indent=2, ensure_ascii=False), encoding="utf-8"
     )
-    print(f"解析完成，共 {len(articles)} 條 Article + {len(annex_entries)} 筆 Annex I 項目"
+    print(f"解析完成，共 {len(articles)} 條 Article + {len(annex_entries)} 筆 Annex 項目"
           f"（合計 {len(all_entries)} 筆），存到 {OUTPUT_PATH}")
 
     if args.verify:
@@ -319,10 +393,23 @@ def main():
             print(f"Article 數量核對通過（官方 {EXPECTED_ARTICLE_COUNT} 條，解析出 {len(articles)} 條）。")
 
         if annex_entries:
-            print(f"Annex I 解析出 {len(annex_entries)} 筆項目，"
+            print(f"Annex 解析出 {len(annex_entries)} 筆項目，"
                   f"建議抽查幾筆 embedding_text 內容確認標籤跟文字對得起來。")
         else:
-            print("警告：Annex I 沒有解析出任何項目，請檢查 raw_page.html 裡 id=\"anx_I\" 的結構。")
+            print("警告：Annex 沒有解析出任何項目，請檢查 raw_page.html 裡 id=\"anx_*\" 的結構。")
+
+        # 迴歸檢查：article_no 在下游（retrieve_cra.py 的 RRF 合併）被當成
+        # 唯一 id 使用，重複會導致其中一筆被靜默覆蓋——這正是原本 Annex I
+        # Part I/Part II 撞號的那個 bug，加這個檢查避免未來又不小心引入。
+        seen = {}
+        for entry in all_entries:
+            seen.setdefault(entry["article_no"], []).append(entry)
+        dupes = {k: v for k, v in seen.items() if len(v) > 1}
+        if dupes:
+            print(f"警告：發現 {len(dupes)} 個重複的 article_no，下游會有內容被靜默覆蓋："
+                  + ", ".join(dupes.keys()))
+        else:
+            print("article_no 唯一性檢查通過，沒有重複的條文編號。")
 
 
 if __name__ == "__main__":
