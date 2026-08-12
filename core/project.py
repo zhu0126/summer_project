@@ -116,6 +116,7 @@ def run_pipeline(
     zap_auto_start: bool = False,
     make_report: bool = False,
     operator: str = "unknown",
+    use_llm: bool = False,
     make_pdf: bool = False,
     org: str = "",
     title: str | None = None,
@@ -194,7 +195,7 @@ def run_pipeline(
         scan_metadata = report.build_scan_metadata(
             operator=operator, ip=ip or "", firmware=firmware or "", url=url or "",
         )
-        content = report.render_report(all_findings, scan_metadata)
+        content = report.render_report(all_findings, scan_metadata, use_llm=use_llm)
         # 沿用跟 combined json 相同的時間戳記，方便從報告回溯到是哪次
         # orchestrator 執行產生的（跟 combined_{run_ts}.json 對應）
         report_path = report.save_report(content, f"report_{run_ts}")
@@ -261,6 +262,10 @@ def main():
                          help="掃描完成後一併產生 Markdown 合規報告")
     parser.add_argument("--operator", default="unknown",
                          help="操作者名稱，寫入報告的 Scan Information（搭配 --report 使用）")
+    parser.add_argument("--llm", action="store_true",
+                         help="報告中的待複核項目附上 LLM 研判建議（搭配 --report 使用）。"
+                              "需要 pip install google-genai 並設定環境變數 GEMINI_API_KEY；"
+                              "會把 finding 內容（含目標 IP、服務清單）送給外部 API")
     parser.add_argument("--pdf", action="store_true",
                          help="在 Markdown 報告之外，另外產生 PDF 版本（需搭配 --report）")
     parser.add_argument("--org", default="",
@@ -279,7 +284,7 @@ def main():
             run_as_root=args.run_as_root,
             url=args.url, zap_api_url=args.zap_api_url,
             active_scan=not args.no_active_scan, zap_auto_start=args.zap_auto_start,
-            make_report=args.report, operator=args.operator,
+            make_report=args.report, operator=args.operator, use_llm=args.llm,
             make_pdf=args.pdf, org=args.org, title=args.title,
         )
     except ValueError as e:

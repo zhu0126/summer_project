@@ -22,6 +22,12 @@ matched**，一律維持 status="needs_review"，只附上 CWE/CRA 各前
 規則沒比對到時是 {"cwe": [...], "cra": [...]}），report.py 的
 樣板要相應調整才能呈現這份候選建議。
 
+LLM 研判（llm_advice）：analyze_findings(use_llm=True) 時，會把上面
+那份候選再交給 core/llm_advisor.py 產出一段文字研判。這一步同樣
+不改變 status——它只是把「這五條可能有關」變成「這筆發現跟這幾條的
+關係是什麼」，讓人工複核有個起點，判定權仍然在人身上。預設關閉，
+理由見 analyze_finding() 的 docstring。
+
 CWE/CRA 知識庫都是選用依賴：import 失敗或查詢失敗都不該讓整條
 分析流程掛掉——退回只用規則比對的結果，並印出警告讓使用者知道
 RAG 這條路徑目前不可用。
@@ -47,6 +53,12 @@ except ImportError:
     except ImportError:
         retrieve_cra_hybrid = None
         print("[analysis] 警告：cra_kb 無法匯入，CRA 候選建議停用")
+
+try:
+    from core.llm_advisor import advise_finding as llm_advise_finding
+except ImportError:
+    llm_advise_finding = None
+    print("[analysis] 警告：llm_advisor 無法匯入，LLM 研判建議停用")
 
 # 每個知識庫各給幾筆候選——不做信心分數過濾（實測證明單一門檻無法
 # 區分雜訊跟真訊號），改成把前幾名都列出來，交給人腦判斷，而不是
@@ -110,17 +122,51 @@ def _cra_candidates(finding: dict) -> list[dict]:
         return []
 
 
-def analyze_finding(finding: dict) -> dict:
+def _llm_advice(finding: dict, suggestions: dict) -> dict | None:
+    """
+    把檢索到的候選交給 LLM 產出一段研判建議（llm_advisor.py）。
+
+    只在 needs_review 這條路徑上呼叫，而且吃的是上面剛檢索出來的
+    同一份 suggestions——報告裡列給人看的候選，跟 LLM 實際讀到的
+    候選必須是同一份，否則人工複核時無從判斷這段建議是根據什麼寫的。
+
+    任何失敗都回 None（沒裝 google-genai、沒設金鑰、API 呼叫失敗），
+    跟 CWE/CRA 檢索的降級原則一致：這是選用的加值路徑，不該讓整份
+    分析結果產不出來。
+    """
+    if llm_advise_finding is None:
+        return None
+    try:
+        return llm_advise_finding(finding, suggestions)
+    except Exception as e:
+        print(f"[analysis] LLM 研判失敗，略過（{e}）")
+        return None
+
+
+def analyze_finding(finding: dict, use_llm: bool = False) -> dict:
     """
     分析單一 finding：
     1. 規則比對（keyword_rules）成功 → 直接採用，這條路徑完全不變，
        仍然是系統裡唯一會自動判定 status="matched" 的來源
     2. 規則沒比對到 → 維持 status="needs_review"，附上 rag_suggestions
        （CWE/CRA 各前 N 名候選 + 分數），供人工複核時參考，不自動判定
+    3. use_llm=True 時，額外把候選交給 LLM 產出一段文字研判
+       （llm_advice），一樣只是附加的參考意見，不影響 status
+
+    use_llm 預設 False 的理由：這條路徑會對外送出請求（掃描結果含
+    目標 IP 與服務清單）、需要 API 金鑰、而且逐筆呼叫是有成本的。
+    這種有外部副作用又要花錢的行為應該由使用者明確開啟，不該是
+    跑一次 analyze_findings() 就默默發生的預設行為。
     """
     rule_result = rule_analyze_finding(finding)
     if rule_result["status"] == "matched":
-        return {**rule_result, "cwe_id": None, "confidence": None, "rag_suggestions": None}
+        return {**rule_result, "cwe_id": None, "confidence": None,
+                "rag_suggestions": None, "llm_advice": None}
+
+    suggestions = {
+        "cwe": _cwe_candidates(finding),
+        "cra": _cra_candidates(finding),
+    }
 
     return {
         "finding_id": finding["finding_id"],
@@ -132,16 +178,14 @@ def analyze_finding(finding: dict) -> dict:
         "cra_reference": None,
         "cwe_id": None,
         "confidence": None,
-        "rag_suggestions": {
-            "cwe": _cwe_candidates(finding),
-            "cra": _cra_candidates(finding),
-        },
+        "rag_suggestions": suggestions,
+        "llm_advice": _llm_advice(finding, suggestions) if use_llm else None,
     }
 
 
-def analyze_findings(findings: list[dict]) -> list[dict]:
+def analyze_findings(findings: list[dict], use_llm: bool = False) -> list[dict]:
     """對一批 findings 逐一分析，回傳合併後的分析結果清單。"""
-    return [analyze_finding(f) for f in findings]
+    return [analyze_finding(f, use_llm=use_llm) for f in findings]
 
 
 if __name__ == "__main__":

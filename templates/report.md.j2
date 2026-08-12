@@ -78,10 +78,24 @@ CRA 候選：
 {% if not item.rag_suggestions or (not item.rag_suggestions.cwe and not item.rag_suggestions.cra) %}
 （語意檢索目前沒有回傳候選，可能是知識庫尚未建立或連線失敗）
 {% endif %}
+{% if item.llm_advice %}
+
+**AI 研判建議**（模型：{{ item.llm_advice.model }}，僅依據上方候選資料產生）
+
+{{ item.llm_advice.answer }}
+{% if item.llm_advice.unsupported_citations %}
+
+> ⚠️ **引用查核未通過**：以下編號出現在上述建議中，但不在本次提供給模型的
+> 參考資料範圍內，極可能是模型自行生成的錯誤條號，引用前務必逐一查證原始法規 —
+> {{ item.llm_advice.unsupported_citations | join("、") }}
+{% endif %}
+{% endif %}
 
 {% endfor %}
 {% endif %}
 
 ---
 
-*本報告部分內容由自動化規則比對產生，非正式法律意見，實際合規判定請諮詢專業人員或法務單位複核。*
+*本報告部分內容由自動化規則比對與語意檢索產生，其中標示「AI 研判建議」的段落由
+大型語言模型依檢索到的候選資料撰寫，可能有誤讀或引用錯誤。全文均非正式法律意見，
+實際合規判定請諮詢專業人員或法務單位複核。*

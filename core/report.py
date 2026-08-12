@@ -18,6 +18,7 @@ from jinja2 import Environment, FileSystemLoader
 
 from core.common import get_output_dir
 from core.analysis import analyze_findings
+from core import llm_advisor
 
 TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "templates"
 TEMPLATE_NAME = "report.md.j2"
@@ -42,6 +43,14 @@ def merge_findings_and_analysis(findings: list[dict], analysis_results: list[dic
     """
     用 finding_id 把兩份各自獨立的資料合併成一份，讓樣板可以直接逐筆
     迭代印出，不需要在 Jinja2 樣板裡寫查找比對的邏輯。
+
+    已修正的 bug：這裡原本只複製 status/risk_level/recommendation/
+    cra_reference 四個欄位，漏掉了 analysis.py 後來新增的
+    rag_suggestions——樣板裡的「待複核項目」章節讀 item.rag_suggestions
+    永遠是 undefined，於是每一筆都印成「語意檢索目前沒有回傳候選」，
+    看起來像知識庫連不上，實際上是候選在合併這一步就被丟掉了。
+    Jinja2 對未定義變數預設是靜默當成 falsy，不會報錯，所以這種
+    「少複製一個欄位」的漏洞完全不會有任何錯誤訊息。
     """
     analysis_by_id = {a["finding_id"]: a for a in analysis_results}
 
@@ -54,6 +63,8 @@ def merge_findings_and_analysis(findings: list[dict], analysis_results: list[dic
             "risk_level": analysis.get("risk_level", "info"),
             "recommendation": analysis.get("recommendation"),
             "cra_reference": analysis.get("cra_reference"),
+            "rag_suggestions": analysis.get("rag_suggestions"),
+            "llm_advice": analysis.get("llm_advice"),
         })
     return merged
 
@@ -74,8 +85,13 @@ def group_by_target(merged_findings: list[dict]) -> list[dict]:
     return [{"target": target, "findings": items} for target, items in groups.items()]
 
 
-def render_report(findings: list[dict], scan_metadata: dict) -> str:
-    analysis_results = analyze_findings(findings)
+def render_report(findings: list[dict], scan_metadata: dict, use_llm: bool = False) -> str:
+    """
+    use_llm=True 時，待複核項目會額外附上一段 LLM 依檢索結果寫出的
+    研判建議（需要 GEMINI_API_KEY，見 core/llm_advisor.py）。預設關閉，
+    沒開的時候報告內容跟以前完全一樣。
+    """
+    analysis_results = analyze_findings(findings, use_llm=use_llm)
     merged_findings = merge_findings_and_analysis(findings, analysis_results)
     finding_groups = group_by_target(merged_findings)
 
@@ -134,7 +150,15 @@ def main():
     )
     parser.add_argument("findings_json", help="Path to a findings json file (from nmap_scan/firmware_scan/zap_scan/project.py)")
     parser.add_argument("--operator", default="unknown", help="Who ran this scan")
+    parser.add_argument("--llm", action="store_true",
+                         help="待複核項目附上 LLM 依檢索結果產生的研判建議"
+                              f"（需設定環境變數 {llm_advisor.API_KEY_ENV}，"
+                              "會把 finding 內容送給外部 API）")
     args = parser.parse_args()
+
+    if args.llm and not llm_advisor.is_available():
+        print(f"[report] 警告：--llm 已開啟，但 google-genai 未安裝或未設定 "
+              f"{llm_advisor.API_KEY_ENV}，本次報告不會有 LLM 研判段落。")
 
     findings_path = Path(args.findings_json)
     if not findings_path.is_file():
@@ -144,7 +168,7 @@ def main():
     findings = json.loads(findings_path.read_text(encoding="utf-8"))
     scope = infer_scope(findings)
     scan_metadata = build_scan_metadata(operator=args.operator, **scope)
-    content = render_report(findings, scan_metadata)
+    content = render_report(findings, scan_metadata, use_llm=args.llm)
 
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     base_name = f"report_{ts}"
