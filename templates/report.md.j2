@@ -5,16 +5,29 @@
 | 項目 | 內容 |
 |---|---|
 | 掃描時間 | {{ scan_metadata.scan_time }} |
-| 掃描範圍 | {{ scan_metadata.scope }} |
+{% if scan_metadata.ip %}
+| IP | {{ scan_metadata.ip }} |
+{% endif %}
+{% if scan_metadata.firmware %}
+| Firmware | {{ scan_metadata.firmware }} |
+{% endif %}
+{% if scan_metadata.url %}
+| URL | {{ scan_metadata.url }} |
+{% endif %}
 | 操作者 | {{ scan_metadata.operator }} |
 
 ## Findings
 
-{% if merged_findings %}
-| 目標 | 項目 | 狀態 | 風險等級 |
-|---|---|---|---|
-{% for item in merged_findings -%}
-| {{ item.target }} | {{ item.title }} | {{ item.detail.state | default("-") }} | {{ item.risk_level | upper }} |
+{% if finding_groups %}
+{% for group in finding_groups %}
+### {{ group.target }}
+
+| 項目 | 狀態 | 風險等級 |
+|---|---|---|
+{% for item in group.findings -%}
+| {{ item.title }} | {{ item.detail.state | default("-") }} | {{ item.risk_level | upper }} |
+{% endfor %}
+
 {% endfor %}
 {% else %}
 本次掃描沒有發現任何項目。
@@ -28,19 +41,44 @@
 ### [{{ item.risk_level | upper }}] {{ item.title }}（{{ item.target }}）
 
 - **建議**：{{ item.recommendation }}
+{% if item.cra_reference %}
 - **對應法規**：{{ item.cra_reference }}
+{% endif %}
 
 {% endfor %}
 {% else %}
 本次掃描沒有比對到需要處理的項目。
 {% endif %}
 
-{% set unmatched_items = merged_findings | selectattr("status", "equalto", "no_match") | list %}
-{% if unmatched_items %}
-## 其他未列入規則比對的項目
+{% set review_items = merged_findings | selectattr("status", "equalto", "needs_review") | list %}
+{% if review_items %}
+## 待複核項目（規則未涵蓋，附語意檢索候選建議）
 
-{% for item in unmatched_items -%}
-- {{ item.title }}（{{ item.target }}）
+以下項目沒有對應到既有規則，系統無法自動判定風險等級，僅附上語意檢索
+找到的候選分類/條文供參考。**這些候選建議未經驗證，可能不準確，不能
+直接當作正式判讀結果引用，請由人工逐項確認。**
+
+{% for item in review_items %}
+### {{ item.title }}（{{ item.target }}）
+
+{% if item.rag_suggestions and item.rag_suggestions.cwe %}
+CWE 候選：
+{% for c in item.rag_suggestions.cwe %}
+- `{{ c.cwe_id }}` {{ c.name }}{% if c.score %}（分數 {{ "%.2f" | format(c.score) }}）{% endif %}{% if c.matched_by %} [{{ c.matched_by | join("+") }}]{% endif %}
+
+{% endfor %}
+{% endif %}
+{% if item.rag_suggestions and item.rag_suggestions.cra %}
+CRA 候選：
+{% for c in item.rag_suggestions.cra %}
+- {{ c.article_no }}（{{ c.title }}{% if c.score %}，分數 {{ "%.2f" | format(c.score) }}{% endif %}）{% if c.matched_by %} [{{ c.matched_by | join("+") }}]{% endif %}
+
+{% endfor %}
+{% endif %}
+{% if not item.rag_suggestions or (not item.rag_suggestions.cwe and not item.rag_suggestions.cra) %}
+（語意檢索目前沒有回傳候選，可能是知識庫尚未建立或連線失敗）
+{% endif %}
+
 {% endfor %}
 {% endif %}
 
