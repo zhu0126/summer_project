@@ -5,7 +5,13 @@ Orchestrator：依序呼叫 nmap_scan / firmware_scan / zap_scan 三個掃描模
 
 對應架構圖：這支程式站在「收集層」之上，本身不做任何掃描邏輯，
 只負責「決定要跑哪些模組」跟「把結果串起來」。三個模組各自仍然可以
-單獨當 CLI 執行（python3 nmap_scan.py <ip>），這裡只是多一種串接用法。
+單獨當 CLI 執行（在專案根目錄執行 python3 -m scanners.nmap_scan <ip>），
+這裡只是多一種串接用法。
+
+CLI 執行方式：在專案根目錄執行 python3 -m core.project ...
+（用 -m 而不是直接 python3 core/project.py，因為這裡用的是套件內的
+絕對 import 如 from core.common import ...，需要專案根目錄在 sys.path
+上，-m 會自動把當下工作目錄加進 sys.path，直接執行檔案則不會）。
 
 設計取捨：任一模組失敗（工具沒裝、連線失敗、目標格式錯誤...）不會讓
 整支程式中斷，會印出警告後跳過該模組、繼續跑其他有提供目標的模組，
@@ -18,12 +24,12 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from common import save_findings_json, print_findings, set_output_dir, get_output_dir
+from core.common import save_findings_json, print_findings, set_output_dir, get_output_dir
 
-import nmap_scan
-import firmware_scan
-import zap_scan
-import report
+from scanners import nmap_scan
+from scanners import firmware_scan
+from scanners import zap_scan
+from core import report
 
 try:
     # md_to_pdf 是子資料夾（package）的情況

@@ -22,20 +22,20 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 
-# 讓 backend/main.py 能 import 到專案根目錄下的模組（project.py/common.py/...）
+# 讓 backend/main.py 能 import 到專案根目錄下的 core/、scanners/ 套件。
 # 目錄結構假設：<專案根>/webapp/backend/main.py，往上三層就是專案根。
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
-import project  # noqa: E402
-import nmap_scan  # noqa: E402
-import zap_scan  # noqa: E402
-import common  # noqa: E402
+from core import project  # noqa: E402
+from core import common  # noqa: E402
+from scanners import nmap_scan  # noqa: E402
+from scanners import zap_scan  # noqa: E402
 
 # 專案根目錄（backend/main.py 往上兩層）。用絕對路徑而不是讓
 # set_output_dir() 用相對路徑「output」，是因為相對路徑會跟著
 # uvicorn 啟動時的工作目錄走——如果從 webapp/backend/ 底下啟動，
 # 輸出會意外跑到 webapp/backend/output/，跟透過 CLI（在專案根目錄
-# 執行 python3 project.py）產生的 output/ 分散在兩個不同地方，
+# 執行 python3 -m core.project）產生的 output/ 分散在兩個不同地方，
 # 導致同一個工具、不同執行方式的輸出資料夾不一致。
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 

@@ -18,7 +18,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 CWE_SOURCE_URL = "https://cwe.mitre.org/data/xml/cwec_latest.xml.zip"
-OUTPUT_PATH = Path("cwe_data/cwe_entries.json")
+OUTPUT_PATH = Path(__file__).resolve().parent / "cwe_data" / "cwe_entries.json"
 
 
 def localname(tag: str) -> str:

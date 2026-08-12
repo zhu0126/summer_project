@@ -16,10 +16,10 @@ from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader
 
-from common import get_output_dir
-from analysis import analyze_findings
+from core.common import get_output_dir
+from core.analysis import analyze_findings
 
-TEMPLATE_DIR = Path(__file__).parent / "templates"
+TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "templates"
 TEMPLATE_NAME = "report.md.j2"
 
 

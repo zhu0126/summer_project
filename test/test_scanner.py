@@ -9,13 +9,14 @@
 """
 import sys
 from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 # get_output_dir/print_file_status/save_findings_json/print_findings 是三個掃描
 # 模組共用的邏輯，統一放在 common.py；parse_nmap_xml 是 nmap 特有的解析邏輯，
 # 放在 nmap_scan.py。故意不呼叫 nmap_scan.run_scan()，因為那個函式會重新執行
 # 一次 nmap，不符合這支測試腳本「不重跑 nmap，只驗證既有檔案」的目的。
-from common import get_output_dir, print_file_status, save_findings_json, print_findings
-from nmap_scan import parse_nmap_xml
+from core.common import get_output_dir, print_file_status, save_findings_json, print_findings
+from scanners.nmap_scan import parse_nmap_xml
 
 
 def find_latest_base_name() -> str:

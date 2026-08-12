@@ -13,6 +13,10 @@ collection，把 top-5 的完整分數印出來，用來實際觀察分數分佈
 用法：
     python3 test_rag_scores.py
 """
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 from cwe_kb.retrieve_cwe import retrieve_cwe
 from cra_kb.retrieve_cra import retrieve_cra
 

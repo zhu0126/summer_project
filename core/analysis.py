@@ -26,7 +26,7 @@ CWE/CRA 知識庫都是選用依賴：import 失敗或查詢失敗都不該讓�
 分析流程掛掉——退回只用規則比對的結果，並印出警告讓使用者知道
 RAG 這條路徑目前不可用。
 """
-from keyword_rules import analyze_finding as rule_analyze_finding
+from core.keyword_rules import analyze_finding as rule_analyze_finding
 
 try:
     # cwe_kb 是子資料夾的情況
@@ -145,7 +145,7 @@ def analyze_findings(findings: list[dict]) -> list[dict]:
 
 
 if __name__ == "__main__":
-    from common import make_finding
+    from core.common import make_finding
 
     sample_findings = [
         make_finding("network", "nmap", "192.168.1.20", "info", "tcp/23 telnet",

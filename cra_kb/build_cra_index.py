@@ -17,7 +17,7 @@ from fastembed import TextEmbedding
 from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, PointStruct, VectorParams
 
-INPUT_PATH = Path("cra_data/cra_articles.json")
+INPUT_PATH = Path(__file__).resolve().parent / "cra_data" / "cra_articles.json"
 COLLECTION_NAME = "cra"
 EMBEDDING_MODEL = "BAAI/bge-small-en-v1.5"  # 跟 cwe collection 用同一顆，向量空間一致
 QDRANT_HOST = "localhost"

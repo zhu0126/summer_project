@@ -17,7 +17,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 from datetime import datetime
 
-from common import get_output_dir, print_file_status, save_findings_json, make_finding, print_findings
+from core.common import get_output_dir, print_file_status, save_findings_json, make_finding, print_findings
 
 # 合法的 nmap timing template，只有這幾個值。UI 端的下拉選單應該只能選
 # 這幾種，不開放自由輸入——跟不用自由文字讓使用者輸入任意 nmap 參數

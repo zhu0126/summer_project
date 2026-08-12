@@ -37,7 +37,7 @@ import requests
 from bs4 import BeautifulSoup
 
 CRA_SOURCE_URL = "https://eur-lex.europa.eu/legal-content/EN/TXT/HTML/?uri=OJ:L_202402847"
-OUTPUT_PATH = Path("cra_data/cra_articles.json")
+OUTPUT_PATH = Path(__file__).resolve().parent / "cra_data" / "cra_articles.json"
 EXPECTED_ARTICLE_COUNT = 71  # CRA 官方公告全文共 71 條，用來事後檢查解析是否正常
 
 ARTICLE_NO_PATTERN = re.compile(r"Article\s+(\d+)", re.IGNORECASE)

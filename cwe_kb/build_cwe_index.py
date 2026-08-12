@@ -14,7 +14,7 @@ from fastembed import TextEmbedding
 from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, PointStruct, VectorParams
 
-INPUT_PATH = Path("cwe_data/cwe_entries.json")
+INPUT_PATH = Path(__file__).resolve().parent / "cwe_data" / "cwe_entries.json"
 COLLECTION_NAME = "cwe"
 EMBEDDING_MODEL = "BAAI/bge-small-en-v1.5"  # 384 維，體積小、速度快，MVP 夠用
 QDRANT_HOST = "localhost"

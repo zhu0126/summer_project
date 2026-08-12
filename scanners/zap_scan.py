@@ -33,7 +33,7 @@ from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlparse
 
-from common import get_output_dir, print_file_status, save_findings_json, make_finding, print_findings
+from core.common import get_output_dir, print_file_status, save_findings_json, make_finding, print_findings
 
 try:
     from zapv2 import ZAPv2

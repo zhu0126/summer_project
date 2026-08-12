@@ -1,5 +1,9 @@
-from common import make_finding
-from analysis import analyze_findings
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from core.common import make_finding
+from core.analysis import analyze_findings
 
 test_findings = [
     # SMB — 老牌漏洞溫床（EternalBlue 這類），nmap 常見服務名

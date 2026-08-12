@@ -16,7 +16,7 @@
 CRA 對照僅為佔位範例，不是正式法律意見，之後要換成真正查證過的
 條文內容或串接完整版 RAG 的檢索結果。
 """
-from common import SEVERITY_ORDER
+from core.common import SEVERITY_ORDER
 
 # key：nmap 回報的 service 名稱（小寫）
 # value：風險等級、建議、對應的 CRA 條文參考（佔位文字，待正式版替換）
@@ -119,7 +119,7 @@ def print_analysis(analysis_results: list[dict]) -> None:
 
 if __name__ == "__main__":
     # 快速手動測試：用假的 finding 資料檢查比對邏輯是否正確
-    from common import make_finding
+    from core.common import make_finding
 
     sample_findings = [
         make_finding("network", "nmap", "192.168.1.20", "info", "tcp/23 telnet",

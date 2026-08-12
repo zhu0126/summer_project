@@ -1,8 +1,9 @@
 import sys
-sys.path.insert(0, '.')
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from common import make_finding
-from analysis import _build_rag_query, _cwe_candidates, _cra_candidates
+from core.common import make_finding
+from core.analysis import _build_rag_query, _cwe_candidates, _cra_candidates
 
 # 換成你要測試的實際情境
 finding = make_finding(
