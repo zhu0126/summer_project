@@ -2,6 +2,8 @@
 __pycache__/
 *.pyc
 .venv/
+.env
+.env.local
 
 # 執行期產生的掃描結果/報告（每次跑測試都會新增，不該進版控）
 output/*
