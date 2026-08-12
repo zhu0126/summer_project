@@ -15,3 +15,5 @@ webapp/backend/uploads/
 # md_to_pdf.py 執行後產生的範例輸出
 md_to_pdf/report_*.md
 md_to_pdf/report_*.pdf
+
+.env
