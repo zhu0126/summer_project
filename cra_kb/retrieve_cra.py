@@ -134,6 +134,11 @@ def retrieve_cra_hybrid(query_text: str, top_k: int = 3, candidate_k: int = 10) 
 
     dense_ids = [r["article_no"] for r in dense_results]
     sparse_ids = [r["article_no"] for r in sparse_results]
+
+    if reciprocal_rank_fusion is None:
+        print("[retrieve_cra] hybrid_search 不可用，退化為 dense-only 排名")
+        return [{**r, "matched_by": ["dense"]} for r in dense_results[:top_k]]
+
     fused_scores = reciprocal_rank_fusion([dense_ids, sparse_ids])
 
     dense_set = set(dense_ids)
