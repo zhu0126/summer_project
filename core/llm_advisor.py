@@ -30,7 +30,6 @@ RAG 的最後一段：把檢索到的 CWE/CRA 候選 + finding 本身交給 LLM�
 import os
 import re
 
-# llm_advisor.py 開頭補上
 from dotenv import load_dotenv
 load_dotenv()
 
