@@ -11,7 +11,7 @@ collection，把 top-5 的完整分數印出來，用來實際觀察分數分佈
 組合，第一名到底像不像真的答案」。
 
 用法：
-    python3 sample_rag_scores.py
+    python3 test_rag_scores.py
 """
 from cwe_kb.retrieve_cwe import retrieve_cwe
 from cra_kb.retrieve_cra import retrieve_cra
