@@ -30,6 +30,10 @@ RAG 的最後一段：把檢索到的 CWE/CRA 候選 + finding 本身交給 LLM�
 import os
 import re
 
+# llm_advisor.py 開頭補上
+from dotenv import load_dotenv
+load_dotenv()
+
 # 環境變數名稱。不接受用參數傳明碼金鑰進來，也不從設定檔讀——
 # 金鑰跟著程式碼或設定檔一起進版控是最常見的外洩途徑。
 API_KEY_ENV = "GEMINI_API_KEY"
