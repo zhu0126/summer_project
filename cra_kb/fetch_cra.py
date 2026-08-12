@@ -76,6 +76,16 @@ def parse_via_css_classes(soup: BeautifulSoup) -> list[dict]:
     """
     主要解析路徑：依 EUR-Lex 公報固定的 CSS class 抓取條文結構。
     抓不到任何 oj-ti-art 標記時回傳空 list，讓呼叫端改用 fallback。
+
+    已修正的 bug：原本直接掃描整份文件裡所有 oj-normal 段落，遇到
+    下一個 oj-ti-art 才收尾。但最後一條 Article（71）之後接的是
+    Annex II~VIII、CE 聲明範本、Notified Body 審查程序，這些段落
+    同樣用 oj-normal，而且後面不會再出現任何 oj-ti-art 標記去終止
+    收集——導致 Article 71 的 text 把後面幾千字的無關內容全部吸了
+    進去，實測發現這會讓語意檢索誤判成「Article 71 內容跟查詢相關」，
+    但其實是混進去的 Annex 內容造成的假訊號。修法：明確排除掉屬於
+    任何 Annex 容器（<div id="anx_*">）底下的段落，Article 解析
+    只收「不屬於 Annex」的內容。
     """
     articles = []
     current = None
@@ -85,6 +95,12 @@ def parse_via_css_classes(soup: BeautifulSoup) -> list[dict]:
     # find_all 依文件順序逐一掃過，遇到新的 oj-ti-art 就切下一條，
     # 不用處理巢狀關係。
     for tag in soup.find_all(["p"], class_=["oj-ti-art", "oj-sti-art", "oj-normal"]):
+        # 這個段落如果屬於任何 Annex 容器（id 開頭是 "anx_"），
+        # 就不是 Article 的內容，跳過——避免最後一條 Article 因為
+        # 後面沒有終止標記，把整個 Annex 都吸進來。
+        if tag.find_parent("div", id=re.compile(r"^anx_")) is not None:
+            continue
+
         classes = tag.get("class", [])
         text = tag.get_text(" ", strip=True)
         if not text:
