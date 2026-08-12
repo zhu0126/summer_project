@@ -1,60 +1,57 @@
 #!/usr/bin/env python3
 """
 分析層的合併入口：串接 keyword_rules.py（規則查表）跟
-cwe_kb/retrieve_cwe.py（RAG 語意檢索）兩條路徑。
+cwe_kb/retrieve_cwe.py、cra_kb/retrieve_cra.py（RAG 語意檢索）。
 
-合併原則：規則優先，RAG 補位，不是兩者都做取分數高的那個。
-- 規則比對的內容是人工驗證過的（telnet→CWE-319 這種對應你確認過），
-  可信度天生比向量相似度分數高。
-- RAG 檢索的分數只反映「語意上多相似」，不代表「多正確」。
-  兩者都做再比大小，容易讓規則已經確定的答案，被 RAG 檢索出的
-  高分但不準的結果覆蓋掉。RAG 的定位是「補規則涵蓋不到的空白」，
-  不是跟規則搶答案。
+設計轉折（重要）：RAG 曾經被設計成「規則沒比對到時，信心分數過
+門檻就自動判定 matched」，但實測發現這個門檻在數學上不成立——
+拿完全無意義的查詢字串（如 "xyz123 random string"）當雜訊基準線，
+它的分數（0.651）比已知正確的規則對照組（telnet, 0.589）還高。
+這代表向量相似度分數在這個 embedding model + 這個領域的組合下，
+沒有能力區分「真的相關」跟「純粹雜訊」，任何固定門檻要嘛太寬鬆
+（雜訊也放行），要嘛太嚴格（連正確答案也被擋掉）。
 
-跟下游的關係：report.py 目前呼叫的是 keyword_rules.analyze_findings()，
-這支模組的 analyze_findings() 回傳格式完全相容（多了 cwe_id/confidence
-兩個新欄位），report.py 換過來呼叫這裡不需要改動樣板或合併邏輯。
+因此改變 RAG 在系統裡的角色：規則沒比對到時，RAG **不再自己判定
+matched**，一律維持 status="needs_review"，只附上 CWE/CRA 各前
+幾名候選（含分數）給使用者在複核時參考。這比較誠實地反映目前
+系統實際的判讀能力，也符合一路以來的原則——AI 判讀是輔助，
+不是最終定論。
 
-CWE 知識庫是選用依賴：容器/測試環境可能沒有 Qdrant 或還沒建好索引，
-import 失敗或查詢失敗都不該讓整條分析流程掛掉——退回只用規則比對的
-結果，並印出警告讓使用者知道 RAG 這條路徑目前不可用。
+跟下游的關係：report.py 呼叫的是 analyze_findings()，回傳格式
+比舊版多了 rag_suggestions 這個欄位（規則已比對到時是 None，
+規則沒比對到時是 {"cwe": [...], "cra": [...]}），report.py 的
+樣板要相應調整才能呈現這份候選建議。
+
+CWE/CRA 知識庫都是選用依賴：import 失敗或查詢失敗都不該讓整條
+分析流程掛掉——退回只用規則比對的結果，並印出警告讓使用者知道
+RAG 這條路徑目前不可用。
 """
 from keyword_rules import analyze_finding as rule_analyze_finding
 
 try:
     # cwe_kb 是子資料夾的情況
-    from cwe_kb.retrieve_cwe import retrieve_cwe
+    from cwe_kb.retrieve_cwe import retrieve_cwe_hybrid
 except ImportError:
     try:
         # cwe_kb 底下的檔案跟其他模組攤平在同一層的情況
-        from retrieve_cwe import retrieve_cwe
+        from retrieve_cwe import retrieve_cwe_hybrid
     except ImportError:
-        retrieve_cwe = None
-        print("[analysis] 警告：cwe_kb 無法匯入，CWE RAG 路徑停用（規則沒比對到時會直接落到 needs_review）")
+        retrieve_cwe_hybrid = None
+        print("[analysis] 警告：cwe_kb 無法匯入，CWE 候選建議停用")
 
 try:
-    from cra_kb.retrieve_cra import retrieve_cra
+    from cra_kb.retrieve_cra import retrieve_cra_hybrid
 except ImportError:
     try:
-        from retrieve_cra import retrieve_cra
+        from retrieve_cra import retrieve_cra_hybrid
     except ImportError:
-        retrieve_cra = None
-        print("[analysis] 警告：cra_kb 無法匯入，CRA RAG 補強路徑停用（cra_reference 不會被自動補上）")
+        retrieve_cra_hybrid = None
+        print("[analysis] 警告：cra_kb 無法匯入，CRA 候選建議停用")
 
-# 語意檢索分數低於這個門檻，不採用，直接標記 needs_review，
-# 避免把「語意上勉強相關」的結果當成可信的判讀結果呈現出去。
-CONFIDENCE_THRESHOLD = 0.5
-
-# CRA 目前只用同一個門檻值當起點——實測發現分數分佈沒有明顯的
-# 「相關/不相關」斷點（真正相關的 0.573 跟不相關的 Article 24 只
-# 差 0.03），這個門檻值還沒有足夠的查詢樣本驗證過，先沿用 CWE 的
-# 設定，之後累積更多真實查詢結果再回頭校準。
-CRA_CONFIDENCE_THRESHOLD = 0.5
-
-# 找不到 CWE 對應的具體風險等級時的預設值——CWE 本身不像
-# keyword_rules 那樣附帶人工評定的風險等級，先給 medium 當保守估計，
-# 之後有更好的判斷依據（例如串接 CVSS）再取代這個寫死的值。
-RAG_DEFAULT_RISK_LEVEL = "medium"
+# 每個知識庫各給幾筆候選——不做信心分數過濾（實測證明單一門檻無法
+# 區分雜訊跟真訊號），改成把前幾名都列出來，交給人腦判斷，而不是
+# 假裝系統能自動篩出「唯一正確答案」。
+RAG_SUGGESTION_TOP_K = 3
 
 
 def _build_rag_query(finding: dict) -> str:
@@ -62,8 +59,7 @@ def _build_rag_query(finding: dict) -> str:
     RAG 查詢用的文字，不要直接拿 finding['title'] 那種帶 port/protocol
     格式的字串去查（例如 network 類別的 title 長得像 "tcp/6379 redis"）。
     這種格式混雜了協定名稱、port 數字這些對語意檢索沒有幫助的雜訊，
-    會稀釋掉真正有意義的關鍵字（"redis"），拉低跟 CWE/CRA 描述文字
-    （通常是完整英文敘述句）的向量相似度分數。
+    會稀釋掉真正有意義的關鍵字（"redis"）。
 
     改成依 category 組一段更接近自然語言的描述：
     - network：用 service（+product/version，如果有）組成 "xxx service"
@@ -88,118 +84,59 @@ def _build_rag_query(finding: dict) -> str:
     return finding["title"]
 
 
-def _rag_lookup(finding: dict) -> dict | None:
+def _cwe_candidates(finding: dict) -> list[dict]:
     """
-    嘗試用 RAG 查詢，任何失敗（模組不存在、Qdrant 連不上、collection
-    還沒建立）都回傳 None，讓呼叫端自然 fallback 到 needs_review，
-    不讓分析層因為 RAG 這條選用路徑掛掉整個流程。
+    回傳 CWE 候選清單（hybrid：dense+sparse 合併排名，不做信心分數
+    過濾），任何失敗（模組不存在、Qdrant 連不上、collection 還沒
+    建立）都回傳空 list，不讓分析層因為這條選用路徑掛掉整個流程。
     """
-    if retrieve_cwe is None:
-        return None
-
+    if retrieve_cwe_hybrid is None:
+        return []
     try:
-        candidates = retrieve_cwe(_build_rag_query(finding), top_k=1)
+        return retrieve_cwe_hybrid(_build_rag_query(finding), top_k=RAG_SUGGESTION_TOP_K)
     except Exception as e:
-        print(f"[analysis] RAG 查詢失敗，略過此路徑（{e}）")
-        return None
-
-    if not candidates:
-        return None
-
-    top = candidates[0]
-    if top["score"] < CONFIDENCE_THRESHOLD:
-        return None
-
-    return top
+        print(f"[analysis] CWE 候選查詢失敗，略過（{e}）")
+        return []
 
 
-def _cra_lookup(finding: dict) -> dict | None:
-    """
-    跟 _rag_lookup 邏輯一致，但查詢對象是 CRA collection。
-    只取 top_k=1（不是 top 3）——實測發現向量資料庫裡的 Article
-    （程序性條文）常常會以接近的分數混進第二三名，把不相關的內容
-    也一起呈現只會誤導使用者；只看分數最高的第一名，配合信心門檻
-    決定要不要採用，比「多給幾個候選讓使用者自己判斷」更不容易
-    誤導人。
-    """
-    if retrieve_cra is None:
-        return None
-
+def _cra_candidates(finding: dict) -> list[dict]:
+    """跟 _cwe_candidates 邏輯一致，查詢對象是 CRA collection。"""
+    if retrieve_cra_hybrid is None:
+        return []
     try:
-        candidates = retrieve_cra(_build_rag_query(finding), top_k=1)
+        return retrieve_cra_hybrid(_build_rag_query(finding), top_k=RAG_SUGGESTION_TOP_K)
     except Exception as e:
-        print(f"[analysis] CRA RAG 查詢失敗，略過此路徑（{e}）")
-        return None
-
-    if not candidates:
-        return None
-
-    top = candidates[0]
-    if top["score"] < CRA_CONFIDENCE_THRESHOLD:
-        return None
-
-    return top
-
-
-def _enrich_cra_reference(result: dict, finding: dict) -> dict:
-    """
-    只在這筆結果還沒有 cra_reference 時才嘗試用 RAG 補上——已經有
-    值代表是 keyword_rules.py 裡人工確認過的引用，可信度比向量檢索
-    高，不能被 RAG 結果覆蓋掉。needs_review 的結果不做這個補強：
-    連「有沒有問題」都還不確定時，附上法規引用反而顯得像是已經
-    做出判斷，容易誤導。
-    """
-    if result["status"] != "matched" or result.get("cra_reference"):
-        return result
-
-    hit = _cra_lookup(finding)
-    if hit is None:
-        return result
-
-    # 明確標示這是 RAG 檢索出來的，附上信心分數，跟人工確認過的
-    # 引用（沒有這個標記跟分數）在呈現上有區別，避免使用者誤以為
-    # 兩者可信度一樣。
-    result["cra_reference"] = (
-        f"{hit['article_no']}（{hit['title']}）"
-        f" — 語意檢索建議，信心分數 {hit['score']:.2f}，建議人工複核"
-    )
-    return result
+        print(f"[analysis] CRA 候選查詢失敗，略過（{e}）")
+        return []
 
 
 def analyze_finding(finding: dict) -> dict:
     """
-    分析單一 finding，依序：
-    1. 規則比對（keyword_rules），比對到就直接採用
-    2. 規則沒比對到，改用 RAG 語意檢索（CWE），信心分數過門檻才採用
-    3. 兩者都沒有可信結果，標記 needs_review，不硬掰答案
-    4. 只要最終判定是 matched，且還沒有 CRA 條文引用，額外嘗試用
-       CRA RAG 補上（不覆蓋已經人工確認過的引用）
+    分析單一 finding：
+    1. 規則比對（keyword_rules）成功 → 直接採用，這條路徑完全不變，
+       仍然是系統裡唯一會自動判定 status="matched" 的來源
+    2. 規則沒比對到 → 維持 status="needs_review"，附上 rag_suggestions
+       （CWE/CRA 各前 N 名候選 + 分數），供人工複核時參考，不自動判定
     """
     rule_result = rule_analyze_finding(finding)
     if rule_result["status"] == "matched":
-        result = {**rule_result, "cwe_id": None, "confidence": None}
-        return _enrich_cra_reference(result, finding)
+        return {**rule_result, "cwe_id": None, "confidence": None, "rag_suggestions": None}
 
-    rag_hit = _rag_lookup(finding)
-    if rag_hit is not None:
-        recommendation = (
-            rag_hit["mitigations"][0] if rag_hit["mitigations"] else rag_hit["description"]
-        )
-        result = {
-            "finding_id": finding["finding_id"],
-            "target": finding["target"],
-            "title": finding["title"],
-            "status": "matched",
-            "risk_level": RAG_DEFAULT_RISK_LEVEL,
-            "recommendation": recommendation,
-            "cra_reference": None,  # CWE 不是法規條文，這欄留空，交給下面的 CRA 補強
-            "cwe_id": rag_hit["cwe_id"],
-            "confidence": rag_hit["score"],
-        }
-        return _enrich_cra_reference(result, finding)
-
-    # 規則跟 RAG 都沒有可信結果，誠實標記需要人工複核
-    return {**rule_result, "status": "needs_review", "cwe_id": None, "confidence": None}
+    return {
+        "finding_id": finding["finding_id"],
+        "target": finding["target"],
+        "title": finding["title"],
+        "status": "needs_review",
+        "risk_level": "info",
+        "recommendation": None,
+        "cra_reference": None,
+        "cwe_id": None,
+        "confidence": None,
+        "rag_suggestions": {
+            "cwe": _cwe_candidates(finding),
+            "cra": _cra_candidates(finding),
+        },
+    }
 
 
 def analyze_findings(findings: list[dict]) -> list[dict]:
@@ -213,8 +150,8 @@ if __name__ == "__main__":
     sample_findings = [
         make_finding("network", "nmap", "192.168.1.20", "info", "tcp/23 telnet",
                      detail={"service": "telnet", "state": "open"}),
-        make_finding("network", "nmap", "192.168.1.20", "info", "tcp/9999 unknown-svc",
-                     detail={"service": "unknown-svc", "state": "open"}),
+        make_finding("network", "nmap", "192.168.1.20", "info", "tcp/6379 redis",
+                     detail={"service": "redis", "state": "open"}),
     ]
     for r in analyze_findings(sample_findings):
         print(r)
