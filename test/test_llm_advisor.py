@@ -144,7 +144,7 @@ if advice:
     check("prompt 帶入 finding 標題", "tcp/23 telnet" in captured["prompt"])
     check("prompt 帶入 detail 欄位", "service: telnet" in captured["prompt"])
     check("prompt 帶入檢索到的參考資料", "CWE-319" in captured["prompt"])
-    check("system instruction 要求只用參考資料作答", "只能根據" in captured["system"])
+    check("system instruction 要求只用參考資料作答", "ONLY" in captured["system"])
     check("sources 記錄實際餵進去的來源", advice["sources"] == allowed)
     check("回覆裡編造的條號被標記出來",
           advice["unsupported_citations"] == ["Article 54"],

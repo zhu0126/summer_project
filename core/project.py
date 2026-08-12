@@ -117,7 +117,6 @@ def run_pipeline(
     make_report: bool = False,
     operator: str = "unknown",
     use_llm: bool = False,
-    make_pdf: bool = False,
     org: str = "",
     title: str | None = None,
     output_root: Path | None = None,
@@ -205,20 +204,20 @@ def run_pipeline(
         print("==== Report ====")
         print(f"Report saved to: {report_path}")
 
-        if make_pdf:
-            # PDF 轉換失敗不該讓已經產出的 Markdown 報告白費，
-            # 只印警告並跳過，跟其他選用依賴（ZAP daemon、CWE 知識庫）
-            # 一致的優雅降級原則。
-            if convert_md_to_pdf is None:
-                print("[pdf] Error: md_to_pdf 模組無法載入，略過 PDF 產生。")
-                print("[pdf] 請確認 md_to_pdf/ 資料夾存在，且已安裝 markdown/beautifulsoup4/weasyprint。")
-            else:
-                pdf_path = report_path.replace(".md", ".pdf")
-                try:
-                    convert_md_to_pdf(report_path, pdf_path, title=title, org=org)
-                    result["pdf_path"] = pdf_path
-                except Exception as e:
-                    print(f"[pdf] Error: PDF 轉換失敗（{e}），Markdown 報告仍可正常使用。")
+        # PDF 現在是報告的固定產出，不再需要另外選擇——有 Markdown 報告
+        # 就自動轉一份 PDF。轉換失敗不該讓已經產出的 Markdown 報告白費，
+        # 只印警告並跳過，跟其他選用依賴（ZAP daemon、CWE 知識庫）
+        # 一致的優雅降級原則。
+        if convert_md_to_pdf is None:
+            print("[pdf] Error: md_to_pdf 模組無法載入，略過 PDF 產生。")
+            print("[pdf] 請確認 md_to_pdf/ 資料夾存在，且已安裝 markdown/beautifulsoup4/weasyprint。")
+        else:
+            pdf_path = report_path.replace(".md", ".pdf")
+            try:
+                convert_md_to_pdf(report_path, pdf_path, title=title, org=org)
+                result["pdf_path"] = pdf_path
+            except Exception as e:
+                print(f"[pdf] Error: PDF 轉換失敗（{e}），Markdown 報告仍可正常使用。")
 
     return result
 
@@ -266,12 +265,10 @@ def main():
                          help="報告中的待複核項目附上 LLM 研判建議（搭配 --report 使用）。"
                               "需要 pip install google-genai 並設定環境變數 GEMINI_API_KEY；"
                               "會把 finding 內容（含目標 IP、服務清單）送給外部 API")
-    parser.add_argument("--pdf", action="store_true",
-                         help="在 Markdown 報告之外，另外產生 PDF 版本（需搭配 --report）")
     parser.add_argument("--org", default="",
-                         help="單位/系統名稱，顯示於 PDF 頁首頁尾（搭配 --pdf 使用）")
+                         help="單位/系統名稱，顯示於 PDF 頁首頁尾（搭配 --report 使用，PDF 會自動產生）")
     parser.add_argument("--title", default=None,
-                         help="PDF 報告標題，預設取自報告內文第一個標題（搭配 --pdf 使用）")
+                         help="PDF 報告標題，預設取自報告內文第一個標題（搭配 --report 使用）")
     args = parser.parse_args()
 
     try:
@@ -285,7 +282,7 @@ def main():
             url=args.url, zap_api_url=args.zap_api_url,
             active_scan=not args.no_active_scan, zap_auto_start=args.zap_auto_start,
             make_report=args.report, operator=args.operator, use_llm=args.llm,
-            make_pdf=args.pdf, org=args.org, title=args.title,
+            org=args.org, title=args.title,
         )
     except ValueError as e:
         parser.error(str(e))

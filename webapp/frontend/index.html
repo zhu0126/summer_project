@@ -121,6 +121,49 @@
     border-left: 2px solid var(--accent);
   }
 
+  .tool-panel { padding: 0; }
+
+  .tool-toggle {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    background: none;
+    border: none;
+    color: inherit;
+    font-family: inherit;
+    cursor: pointer;
+    padding: 18px 22px;
+    text-align: left;
+  }
+  .tool-toggle:hover { background: var(--panel); }
+
+  .tool-toggle .tool-name {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-dim);
+    padding-left: 10px;
+    border-left: 2px solid var(--accent);
+  }
+  .tool-toggle:hover .tool-name { color: var(--text); }
+
+  .tool-toggle .chevron {
+    color: var(--text-faint);
+    font-size: 11px;
+    transition: transform 0.15s ease, color 0.15s ease;
+  }
+  .tool-toggle[aria-expanded="true"] .chevron {
+    transform: rotate(90deg);
+    color: var(--accent);
+  }
+
+  .tool-body {
+    padding: 0 22px 18px 22px;
+  }
+  .tool-body[hidden] { display: none; }
+
   .field { margin-bottom: 12px; }
 
   .field label {
@@ -149,11 +192,13 @@
     border-color: var(--accent);
   }
 
-  .field .hint {
+  .hint {
     font-size: 11px;
     color: var(--text-faint);
     margin-top: 4px;
   }
+
+  .panel > .hint { margin-bottom: 10px; }
 
   .checkbox-row {
     display: flex;
@@ -279,100 +324,122 @@
   <div class="col">
     <form id="scan-form">
 
-      <div class="panel">
-        <h2>Network scan (nmap)</h2>
-        <div class="field">
-          <label for="ip">目標</label>
-          <input type="text" id="ip" name="ip" placeholder="192.168.1.1 / 192.168.1.0/24 / 192.168.1.1,192.168.1.5">
-          <div class="hint">單一 IP、CIDR 網段、或逗號分隔的多個目標</div>
-        </div>
-        <div class="field">
-          <label for="ports">Port 範圍</label>
-          <input type="text" id="ports" name="ports" placeholder="1-1000 或 22,80,443（留白 = nmap 預設）">
-        </div>
-        <div class="field">
-          <label for="timing">掃描速度</label>
-          <select id="timing" name="timing"></select>
-        </div>
-        <div class="field">
-          <label for="scan_technique">掃描技巧</label>
-          <select id="scan_technique" name="scan_technique">
-            <option value="">預設（syn）</option>
-          </select>
-        </div>
-        <div class="field">
-          <label for="script_category">NSE Script 類別</label>
-          <select id="script_category" name="script_category">
-            <option value="">不執行</option>
-          </select>
-        </div>
-        <div class="checkbox-row">
-          <input type="checkbox" id="os_detection" name="os_detection">
-          <div class="label-block">
-            <div class="title">作業系統指紋辨識（-O）</div>
-            <div class="hint">需要較高權限，會延長掃描時間</div>
+      <div class="panel tool-panel">
+        <button type="button" class="tool-toggle" aria-expanded="false" aria-controls="nmap-body">
+          <span class="tool-name">Network scan (nmap)</span>
+          <span class="chevron">▸</span>
+        </button>
+        <div class="tool-body" id="nmap-body" hidden>
+          <div class="field">
+            <label for="ip">目標</label>
+            <input type="text" id="ip" name="ip" placeholder="192.168.1.1 / 192.168.1.0/24 / 192.168.1.1,192.168.1.5">
+            <div class="hint">單一 IP、CIDR 網段、或逗號分隔的多個目標</div>
           </div>
-        </div>
-        <div class="checkbox-row">
-          <input type="checkbox" id="host_discovery" name="host_discovery">
-          <div class="label-block">
-            <div class="title">先做主機存活探測</div>
-            <div class="hint">預設關閉、假設目標都在線（IoT 裝置常擋 ping）</div>
+          <div class="field">
+            <label for="ports">Port 範圍</label>
+            <input type="text" id="ports" name="ports" placeholder="1-1000 或 22,80,443（留白 = nmap 預設）">
           </div>
-        </div>
-      </div>
-
-      <div class="panel">
-        <h2>Firmware scan (binwalk)</h2>
-        <div class="field">
-          <label for="firmware_file">韌體檔案</label>
-          <input type="file" id="firmware_file" name="firmware_file">
-        </div>
-        <div class="checkbox-row">
-          <input type="checkbox" id="extract" name="extract">
-          <div class="label-block">
-            <div class="title">解壓縮（-e）</div>
-            <div class="hint">目前不會自動分析解壓縮出來的內容</div>
+          <div class="field">
+            <label for="timing">掃描速度</label>
+            <select id="timing" name="timing">
+              <option value="T0">T0</option>
+              <option value="T1">T1</option>
+              <option value="T2">T2</option>
+              <option value="T3" selected>T3（預設）</option>
+              <option value="T4">T4</option>
+              <option value="T5">T5</option>
+            </select>
           </div>
-        </div>
-        <div class="checkbox-row">
-          <input type="checkbox" id="matryoshka" name="matryoshka">
-          <div class="label-block">
-            <div class="title">遞迴掃描（-M）</div>
-            <div class="hint">通常搭配解壓縮使用</div>
+          <div class="field">
+            <label for="scan_technique">掃描技巧</label>
+            <select id="scan_technique" name="scan_technique">
+              <option value="">預設（syn）</option>
+            </select>
           </div>
-        </div>
-        <div class="checkbox-row warning">
-          <input type="checkbox" id="run_as_root" name="run_as_root">
-          <div class="label-block">
-            <div class="title">以 root 權限執行解壓縮工具</div>
-            <div class="hint">降低一層安全防護，只有以 root 執行本工具且需要解壓縮時才勾選</div>
+          <div class="field">
+            <label for="script_category">NSE Script 類別</label>
+            <select id="script_category" name="script_category">
+              <option value="">不執行</option>
+            </select>
+          </div>
+          <div class="checkbox-row">
+            <input type="checkbox" id="os_detection" name="os_detection">
+            <div class="label-block">
+              <div class="title">作業系統指紋辨識（-O）</div>
+              <div class="hint">需要較高權限，會延長掃描時間</div>
+            </div>
+          </div>
+          <div class="checkbox-row">
+            <input type="checkbox" id="host_discovery" name="host_discovery">
+            <div class="label-block">
+              <div class="title">先做主機存活探測</div>
+              <div class="hint">預設關閉、假設目標都在線（IoT 裝置常擋 ping）</div>
+            </div>
           </div>
         </div>
       </div>
 
-      <div class="panel">
-        <h2>Web app scan (ZAP)</h2>
-        <div class="field">
-          <label for="url">目標 URL</label>
-          <input type="text" id="url" name="url" placeholder="http://192.168.1.1:8080">
-        </div>
-        <div class="field">
-          <label for="zap_api_url">ZAP daemon API URL</label>
-          <input type="text" id="zap_api_url" name="zap_api_url" placeholder="http://127.0.0.1:8080">
-        </div>
-        <div class="checkbox-row">
-          <input type="checkbox" id="active_scan" name="active_scan" checked>
-          <div class="label-block">
-            <div class="title">執行 Active Scan</div>
-            <div class="hint">會送出攻擊性測試請求，只對你有權測試的目標執行；取消勾選則只做 spider</div>
+      <div class="panel tool-panel">
+        <button type="button" class="tool-toggle" aria-expanded="false" aria-controls="binwalk-body">
+          <span class="tool-name">Firmware scan (binwalk)</span>
+          <span class="chevron">▸</span>
+        </button>
+        <div class="tool-body" id="binwalk-body" hidden>
+          <div class="field">
+            <label for="firmware_file">韌體檔案</label>
+            <input type="file" id="firmware_file" name="firmware_file">
+          </div>
+          <div class="checkbox-row">
+            <input type="checkbox" id="extract" name="extract">
+            <div class="label-block">
+              <div class="title">解壓縮（-e）</div>
+              <div class="hint">目前不會自動分析解壓縮出來的內容</div>
+            </div>
+          </div>
+          <div class="checkbox-row">
+            <input type="checkbox" id="matryoshka" name="matryoshka">
+            <div class="label-block">
+              <div class="title">遞迴掃描（-M）</div>
+              <div class="hint">通常搭配解壓縮使用</div>
+            </div>
+          </div>
+          <div class="checkbox-row warning">
+            <input type="checkbox" id="run_as_root" name="run_as_root">
+            <div class="label-block">
+              <div class="title">以 root 權限執行解壓縮工具</div>
+              <div class="hint">降低一層安全防護，只有以 root 執行本工具且需要解壓縮時才勾選</div>
+            </div>
           </div>
         </div>
-        <div class="checkbox-row">
-          <input type="checkbox" id="zap_auto_start" name="zap_auto_start">
-          <div class="label-block">
-            <div class="title">自動啟動 ZAP daemon</div>
-            <div class="hint">偵測不到 daemon 時自動啟動，結束後自動關閉</div>
+      </div>
+
+      <div class="panel tool-panel">
+        <button type="button" class="tool-toggle" aria-expanded="false" aria-controls="zap-body">
+          <span class="tool-name">Web app scan (ZAP)</span>
+          <span class="chevron">▸</span>
+        </button>
+        <div class="tool-body" id="zap-body" hidden>
+          <div class="field">
+            <label for="url">目標 URL</label>
+            <input type="text" id="url" name="url" placeholder="http://192.168.1.1:8080">
+          </div>
+          <div class="field">
+            <label for="zap_api_url">ZAP daemon API URL</label>
+            <input type="text" id="zap_api_url" name="zap_api_url" placeholder="http://127.0.0.1:8080">
+          </div>
+          <div class="checkbox-row">
+            <input type="checkbox" id="active_scan" name="active_scan" checked>
+            <div class="label-block">
+              <div class="title">執行 Active Scan</div>
+              <div class="hint">會送出攻擊性測試請求，只對你有權測試的目標執行；取消勾選則只做 spider</div>
+            </div>
+          </div>
+          <div class="checkbox-row">
+            <input type="checkbox" id="zap_auto_start" name="zap_auto_start">
+            <div class="label-block">
+              <div class="title">自動啟動 ZAP daemon</div>
+              <div class="hint">偵測不到 daemon 時自動啟動，結束後自動關閉</div>
+            </div>
           </div>
         </div>
       </div>
@@ -383,23 +450,18 @@
           <input type="checkbox" id="make_report" name="make_report" checked>
           <div class="label-block"><div class="title">產生 Markdown 報告</div></div>
         </div>
+        <div class="hint">產生報告時會自動一併輸出 PDF 版本。</div>
         <div class="field">
           <label for="operator">操作者</label>
           <input type="text" id="operator" name="operator" placeholder="你的名字">
         </div>
-        <div class="checkbox-row">
-          <input type="checkbox" id="make_pdf" name="make_pdf">
-          <div class="label-block"><div class="title">另外產生 PDF</div></div>
+        <div class="field">
+          <label for="org">單位名稱</label>
+          <input type="text" id="org" name="org" placeholder="顯示於 PDF 頁首頁尾">
         </div>
-        <div class="indent" id="pdf-fields" style="display:none;">
-          <div class="field">
-            <label for="org">單位名稱</label>
-            <input type="text" id="org" name="org" placeholder="顯示於 PDF 頁首頁尾">
-          </div>
-          <div class="field">
-            <label for="title">報告標題</label>
-            <input type="text" id="title" name="title" placeholder="預設取自報告內文第一個標題">
-          </div>
+        <div class="field">
+          <label for="title">報告標題</label>
+          <input type="text" id="title" name="title" placeholder="預設取自報告內文第一個標題">
         </div>
       </div>
 
@@ -434,14 +496,6 @@ async function loadOptions() {
   const res = await fetch(`${API}/api/options`);
   const data = await res.json();
 
-  const timingSel = document.getElementById("timing");
-  data.timing.forEach(t => {
-    const opt = document.createElement("option");
-    opt.value = t; opt.textContent = t + (t === "T3" ? "（預設）" : "");
-    if (t === "T3") opt.selected = true;
-    timingSel.appendChild(opt);
-  });
-
   const techSel = document.getElementById("scan_technique");
   data.scan_technique.forEach(t => {
     const opt = document.createElement("option");
@@ -459,8 +513,13 @@ async function loadOptions() {
   document.getElementById("zap_api_url").placeholder = data.zap_api_url_default;
 }
 
-document.getElementById("make_pdf").addEventListener("change", (e) => {
-  document.getElementById("pdf-fields").style.display = e.target.checked ? "block" : "none";
+document.querySelectorAll(".tool-toggle").forEach(btn => {
+  btn.addEventListener("click", () => {
+    const expanded = btn.getAttribute("aria-expanded") === "true";
+    const body = document.getElementById(btn.getAttribute("aria-controls"));
+    btn.setAttribute("aria-expanded", String(!expanded));
+    body.hidden = expanded;
+  });
 });
 
 function setStatus(state, text) {

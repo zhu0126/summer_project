@@ -47,20 +47,23 @@ API_KEY_ENV = "GEMINI_API_KEY"
 # 寫死在程式碼裡會變成每次換模型都要改一次原始碼。
 MODEL_NAME = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
 
-SYSTEM_INSTRUCTION = """你是協助 IoT 產品資安合規盤點的分析助理。使用者會給你一筆掃描發現（finding），以及從 CWE 弱點資料庫與歐盟 CRA（Regulation (EU) 2024/2847）法規全文中，用語意檢索找出的候選參考資料。
+SYSTEM_INSTRUCTION = """You are an assistant supporting IoT product cybersecurity compliance review. You will be given one scan finding, plus candidate reference material retrieved via semantic search from a CWE weakness database and the full text of the EU CRA (Regulation (EU) 2024/2847).
 
-嚴格規則：
-1. 只能根據「參考資料」段落的內容作答。參考資料裡沒有的條號、CWE 編號、法規要求，一律不得寫出來，即使你認為自己知道。
-2. 引用時必須完整寫出參考資料標頭裡的識別字串（例如 CWE-319、Article 13、Annex I Part I (2)(a)）。
-3. 檢索結果不保證相關。如果候選資料跟這筆 finding 沒有實質關聯，就直接說明「檢索到的候選與本項無明確關聯」，不要勉強牽拖出一個對應。
-4. 不要下最終合規判定，也不要寫「符合／不符合 CRA」這種結論。你的輸出是給人工複核的參考意見。
+Strict rules:
+1. Answer using ONLY the content in the "Reference Material" section. Do not state any article number, CWE ID, or regulatory requirement that does not appear there, even if you believe you know it.
+2. When citing, reproduce the exact identifier string as it appears in the reference material header (e.g. CWE-319, Article 13, Annex I Part I (2)(a)). Do not abbreviate, renumber, or paraphrase identifiers.
+3. Retrieved results are not guaranteed to be relevant. If none of the candidates have a substantive connection to this finding, say so plainly instead of forcing a match.
+4. Do not issue a final compliance verdict. Never write that something "complies" or "does not comply" with the CRA. Your output is advisory input for a human reviewer only.
+5. Output ONLY the five labeled sections below, in this exact order, with no text before the first label or after the last section. No markdown, no bullet points, no headings other than the labels themselves.
 
-輸出格式（繁體中文，全文不超過 350 字）：
-【風險研判】這筆發現實際代表什麼風險，一到兩句。
-【對應弱點】最相關的 CWE 編號與理由；沒有相關的就寫「無明確對應」。
-【CRA 關聯】最相關的條文編號與它要求了什麼；沒有相關的就寫「無明確對應」。
+Output format — write the content in Traditional Chinese (zh-TW); total length must not exceed 350 characters; use exactly these five labels, each on its own line, each followed by its content on the same line:
+【風險研判】這筆發現實際代表什麼風險，限一到兩句話。
+【對應弱點】最相關的 CWE 編號與理由；若無相關候選，僅寫「無明確對應」。
+【CRA 關聯】最相關的條文編號與它要求了什麼；若無相關候選，僅寫「無明確對應」。
 【修補建議】具體可執行的動作，優先採用參考資料中列出的緩解措施。
-【不確定性】這份建議依據不足的地方，以及人工複核時該優先查證什麼。"""
+【不確定性】這份建議依據不足的地方，以及人工複核時該優先查證什麼。
+
+Do not add any section beyond these five. Do not skip a section even when the answer is "無明確對應"."""
 
 # 從 LLM 回覆裡抓出「看起來像來源編號」的字串，用來跟白名單比對。
 # 三種格式對應知識庫裡實際存在的編號樣式（見 cwe_entries.json 的
@@ -146,17 +149,17 @@ def build_prompt(finding: dict, context: str) -> str:
         f"- {k}: {v}" for k, v in detail.items() if v not in (None, "", [], {})
     )
 
-    return f"""# 掃描發現
+    return f"""# Scan Finding
 
-- 標題：{finding.get('title', '')}
-- 類別：{finding.get('category', '')}（來源工具：{finding.get('source', '')}）
-- 目標：{finding.get('target', '')}
-- 掃描器給定的嚴重度：{finding.get('severity', '')}
+- Title: {finding.get('title', '')}
+- Category: {finding.get('category', '')} (source tool: {finding.get('source', '')})
+- Target: {finding.get('target', '')}
+- Severity reported by scanner: {finding.get('severity', '')}
 {detail_lines}
 
-# 參考資料（語意檢索結果，可能不相關，僅能引用以下內容）
+# Reference Material (semantic search results, may be irrelevant, cite ONLY the content below)
 
-{context if context.strip() else '（本次沒有檢索到任何候選資料）'}
+{context if context.strip() else '(No candidate reference material was retrieved for this finding.)'}
 """
 
 
