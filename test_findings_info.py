@@ -6,8 +6,8 @@ from analysis import _build_rag_query, _cwe_candidates, _cra_candidates
 
 # 換成你要測試的實際情境
 finding = make_finding(
-    "network", "nmap", "192.168.1.10", "info", "tcp/6379 redis",
-    detail={"service": "redis", "state": "open"}
+    "webapp", "zap", "http://192.168.1.1", "info", "Weak Authentication Method",
+    detail={"zap_risk": "medium", "solution": "The product uses an authentication mechanism..."}
 )
 
 query = _build_rag_query(finding)
