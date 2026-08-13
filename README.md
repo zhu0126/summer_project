@@ -14,9 +14,21 @@
 
 1. **規則比對** — 內建 CWE/CRA 對應規則，直接判定合規狀態
 2. **RAG 語意檢索** — 
-   - 使用 Qdrant 向量資料庫存儲 CWE 弱點、CRA 法規條文
+   - 使用 Qdrant 向量資料庫存儲 CWE 弱點、CRA 法規條文、IEC 62443 要求
    - 混合搜尋：dense embedding (fastembed) + BM25 關鍵字，RRF 合併排名
    - 規則未涵蓋時提供候選參考資料
+
+   三個知識庫的分工：
+
+   | 知識庫 | 回答的問題 | 效力 |
+   |---|---|---|
+   | CWE | 這是什麼弱點？ | 分類參考 |
+   | IEC 62443-4-2 | 元件技術上該具備什麼能力？ | 自願性標準 |
+   | CRA | 法律上為什麼非做不可？ | 具強制力的歐盟法規 |
+
+   IEC 62443 的另一部 **4-1（開發流程要求）** 不參與逐筆檢索——掃描測的是
+   成品現狀，4-1 規範的是開發流程，兩者對不上。改成整場掃描查一次，
+   在報告獨立一節呈現。
 3. **AI 研判建議**（可選）—
    - 調用 Gemini LLM 為待複核項目撰寫研判意見
    - 強制引用驗證（只允許引用提供的參考資料，防止幻覺）
@@ -37,7 +49,7 @@
     ├─ matched → 直接判定
     └─ needs_review → 進入 RAG 路徑
         ↓
-[retrieve_cwe/cra_hybrid()] ← Qdrant + fastembed
+[retrieve_cwe/iec/cra_hybrid()] ← Qdrant + fastembed
         ↓
 [rag_context.py] ← 組裝 LLM prompt
         ↓
@@ -76,6 +88,36 @@ python -m cra_kb.fetch_cra
 ```
 
 這些指令會從 MITRE（CWE）及 EUR-Lex（CRA）下載最新資料、建立 Qdrant collection。
+
+#### IEC 62443 知識庫（需自備標準 PDF）
+
+IEC 62443 是**付費標準**，沒有合法的公開全文來源，因此 `fetch_iec.py`
+**不做任何下載**，一律要求你指定自己授權取得的 PDF：
+
+```bash
+python -m iec_kb.fetch_iec --pdf /path/to/iec62443-4-2.pdf --part 4-2 --verify
+```
+
+```bash
+python -m iec_kb.fetch_iec --pdf /path/to/iec62443-4-1.pdf --part 4-1 --verify
+```
+
+```bash
+python -m iec_kb.build_iec_index
+```
+
+`--part` 在檔名含 `62443-4-2` 之類字樣時可省略。`--verify` 會核對條目數量
+（4-1 共 47 條、4-2 共 88 條）、編號唯一性，並確認授權浮水印已剝除乾淨。
+
+解析器已處理三種 PDF 版面陷阱：
+
+- **授權浮水印含個資**（被授權人姓名、公司、訂單編號）。4-2 是頁尾水平文字、
+  4-1 是旋轉 90 度的側邊欄文字，兩種都會剝除，不會進到知識庫或送往 LLM API。
+- **雙語版**（檔名尾碼 `b`）的法文半部條號跟英文完全相同，不切掉會讓每條被
+  解析兩次、下游靜默覆蓋。
+- **目錄折行**：標題太長時目錄第一行不帶點狀引導線，會被誤判成真正的條目。
+
+> ⚠️ `iec_kb/iec_data/` 內含標準原文，已列入 `.gitignore`，**請勿提交或散布**。
 
 ### 環境變數設置（可選）
 
@@ -200,6 +242,11 @@ python -m core.report output/combined_20260812_xxxxx.json --llm
 ├── cra_kb/                   # CRA 知識庫（Qdrant）
 │   ├── fetch_cra.py          # 下載 EUR-Lex CRA、建立索引
 │   └── retrieve_cra.py       # 混合搜尋
+├── iec_kb/                   # IEC 62443 知識庫（Qdrant）
+│   ├── fetch_iec.py          # 解析自備的標準 PDF（不做下載）
+│   ├── build_iec_index.py    # 建 iec62443_4_1 / iec62443_4_2 兩個 collection
+│   ├── retrieve_iec.py       # 混合搜尋（帶 part 參數）
+│   └── iec_data/             # 標準原文，已 gitignore
 ├── templates/                # Jinja2 樣板
 │   └── report.md.j2          # Markdown 報告樣板
 ├── webapp/                   # Web 前後端
@@ -261,8 +308,10 @@ python -m core.llm_advisor
 
 | 失敗情況 | 行為 |
 |---------|------|
-| Qdrant 連不上 | RAG 候選清單為空，仍產出報告 |
-| CWE/CRA 索引未建立 | 候選為空 |
+| Qdrant 連不上 | 退化為純 BM25（sparse-only）排名，仍產出報告 |
+| CWE/CRA/IEC 索引未建立 | 該知識庫候選為空，其他兩個照常 |
+| 未建 IEC 索引（無標準 PDF） | 62443 候選與開發流程對照整節略過 |
+| `rank-bm25` 未安裝 | 退化為純向量（dense-only）排名 |
 | Gemini API 金鑰未設/無效 | LLM 段落略過，報告仍可閱讀 |
 | PDF 轉換失敗 | Markdown 報告正常產出 |
 | ZAP daemon 不存在 | 加 `--zap-auto-start` 自動啟動；或略過 Web 掃描 |
@@ -273,6 +322,10 @@ python -m core.llm_advisor
 2. **LLM 上下文長度** — 超長候選資料會被截斷至 12KB，防止 token 超標
 3. **CRA 條文解析** — EUR-Lex XML 格式變動時需更新 `fetch_cra.py`
 4. **nmap 依賴** — 網路掃描必須本機安裝 nmap；Docker 容器化可考慮 FROM nmap/nmap
+5. **IEC 62443 需自備 PDF** — 付費標準，無法隨專案散布；PDF 版面若改版
+   （不同 edition）可能需要調整 `fetch_iec.py` 的 `PART_SPECS` regex
+6. **62443-4-1 無法由掃描驗證** — 開發流程要求既不能被掃描結果證明也不能
+   被否證，報告該節僅是自評起點，且只列前 8 條（全文共 47 條）
 
 ## 故障排除
 

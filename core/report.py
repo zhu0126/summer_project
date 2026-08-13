@@ -17,7 +17,7 @@ from pathlib import Path
 from jinja2 import Environment, FileSystemLoader
 
 from core.common import get_output_dir
-from core.analysis import analyze_findings
+from core.analysis import analyze_findings, scan_level_process_requirements
 from core import llm_advisor
 
 TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "templates"
@@ -90,10 +90,15 @@ def render_report(findings: list[dict], scan_metadata: dict, use_llm: bool = Fal
     use_llm=True 時，待複核項目會額外附上一段 LLM 依檢索結果寫出的
     研判建議（需要 GEMINI_API_KEY，見 core/llm_advisor.py）。預設關閉，
     沒開的時候報告內容跟以前完全一樣。
+
+    process_requirements（IEC 62443-4-1 開發流程要求）是整場掃描查一次
+    的結果，不隨 use_llm 開關——它不經過 LLM，只是檢索結果，沒有理由
+    綁在 LLM 這個選項上。知識庫沒建時是 None，樣板會整節略過。
     """
     analysis_results = analyze_findings(findings, use_llm=use_llm)
     merged_findings = merge_findings_and_analysis(findings, analysis_results)
     finding_groups = group_by_target(merged_findings)
+    process_requirements = scan_level_process_requirements(findings)
 
     env = Environment(
         loader=FileSystemLoader(str(TEMPLATE_DIR)),
@@ -106,6 +111,7 @@ def render_report(findings: list[dict], scan_metadata: dict, use_llm: bool = Fal
         scan_metadata=scan_metadata,
         merged_findings=merged_findings,
         finding_groups=finding_groups,
+        process_requirements=process_requirements,
     )
 
 

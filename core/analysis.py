@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
 分析層的合併入口：串接 keyword_rules.py（規則查表）跟
-cwe_kb/retrieve_cwe.py、cra_kb/retrieve_cra.py（RAG 語意檢索）。
+cwe_kb/retrieve_cwe.py、iec_kb/retrieve_iec.py、cra_kb/retrieve_cra.py
+（RAG 語意檢索）。
 
 設計轉折（重要）：RAG 曾經被設計成「規則沒比對到時，信心分數過
 門檻就自動判定 matched」，但實測發現這個門檻在數學上不成立——
@@ -19,8 +20,14 @@ matched**，一律維持 status="needs_review"，只附上 CWE/CRA 各前
 
 跟下游的關係：report.py 呼叫的是 analyze_findings()，回傳格式
 比舊版多了 rag_suggestions 這個欄位（規則已比對到時是 None，
-規則沒比對到時是 {"cwe": [...], "cra": [...]}），report.py 的
-樣板要相應調整才能呈現這份候選建議。
+規則沒比對到時是 {"cwe": [...], "iec": [...], "cra": [...]}），
+report.py 的樣板要相應調整才能呈現這份候選建議。
+
+三個知識庫的分工：CWE 是弱點分類（這是什麼問題），IEC 62443-4-2 是
+元件層級的技術要求（技術上該具備什麼能力），CRA 是法規義務（法律上
+為什麼非做不可）。62443 的另一部 4-1 規範的是開發流程，跟逐筆掃描
+結果對不上，改由 scan_level_process_requirements() 在整場掃描層級
+查一次，理由見該函式的說明。
 
 LLM 研判（llm_advice）：analyze_findings(use_llm=True) 時，會把上面
 那份候選再交給 core/llm_advisor.py 產出一段文字研判。這一步同樣
@@ -53,6 +60,15 @@ except ImportError:
     except ImportError:
         retrieve_cra_hybrid = None
         print("[analysis] 警告：cra_kb 無法匯入，CRA 候選建議停用")
+
+try:
+    from iec_kb.retrieve_iec import retrieve_iec_hybrid
+except ImportError:
+    try:
+        from retrieve_iec import retrieve_iec_hybrid
+    except ImportError:
+        retrieve_iec_hybrid = None
+        print("[analysis] 警告：iec_kb 無法匯入，IEC 62443 候選建議停用")
 
 try:
     from core.llm_advisor import advise_finding as llm_advise_finding
@@ -122,6 +138,24 @@ def _cra_candidates(finding: dict) -> list[dict]:
         return []
 
 
+def _iec_candidates(finding: dict) -> list[dict]:
+    """
+    跟 _cwe_candidates 邏輯一致，查詢對象是 IEC 62443-4-2（元件技術要求）。
+
+    只查 4-2、不查 4-1：4-1 是開發流程要求（SM-4 安全專業能力、SVV-4
+    滲透測試…），跟單一筆掃描結果在語意上沒有對應關係，混進同一份
+    top-K 只會擠掉真正相關的 CR。4-1 改成整場掃描層級呈現，見
+    scan_level_process_requirements()。
+    """
+    if retrieve_iec_hybrid is None:
+        return []
+    try:
+        return retrieve_iec_hybrid(_build_rag_query(finding), top_k=RAG_SUGGESTION_TOP_K)
+    except Exception as e:
+        print(f"[analysis] IEC 62443 候選查詢失敗，略過（{e}）")
+        return []
+
+
 def _llm_advice(finding: dict, suggestions: dict) -> dict | None:
     """
     把檢索到的候選交給 LLM 產出一段研判建議（llm_advisor.py）。
@@ -149,7 +183,8 @@ def analyze_finding(finding: dict, use_llm: bool = False) -> dict:
     1. 規則比對（keyword_rules）成功 → 直接採用，這條路徑完全不變，
        仍然是系統裡唯一會自動判定 status="matched" 的來源
     2. 規則沒比對到 → 維持 status="needs_review"，附上 rag_suggestions
-       （CWE/CRA 各前 N 名候選 + 分數），供人工複核時參考，不自動判定
+       （CWE / IEC 62443-4-2 / CRA 各前 N 名候選 + 分數），供人工複核時
+       參考，不自動判定
     3. use_llm=True 時，額外把候選交給 LLM 產出一段文字研判
        （llm_advice），一樣只是附加的參考意見，不影響 status
 
@@ -165,6 +200,7 @@ def analyze_finding(finding: dict, use_llm: bool = False) -> dict:
 
     suggestions = {
         "cwe": _cwe_candidates(finding),
+        "iec": _iec_candidates(finding),
         "cra": _cra_candidates(finding),
     }
 
@@ -186,6 +222,84 @@ def analyze_finding(finding: dict, use_llm: bool = False) -> dict:
 def analyze_findings(findings: list[dict], use_llm: bool = False) -> list[dict]:
     """對一批 findings 逐一分析，回傳合併後的分析結果清單。"""
     return [analyze_finding(f, use_llm=use_llm) for f in findings]
+
+
+# 整場掃描層級的 4-1 候選數。比逐筆的 RAG_SUGGESTION_TOP_K 多，是因為
+# 這一份整份報告只出現一次，多列幾條的閱讀成本很低。
+PROCESS_SUGGESTION_TOP_K = 8
+
+# 掃描類別 → 一句描述性的查詢文字。刻意只描述「掃了什麼」，不摻入
+# 「所以應該要做安全測試」這類推論——那等於先替 4-1 挑好答案再去
+# 檢索，檢索結果就只是把預設立場再唸一次。
+_CATEGORY_QUERY_PHRASES = {
+    "network": "exposed network services and remote access interfaces of a product",
+    "firmware": "firmware image contents, embedded binaries, keys and update packages",
+    "webapp": "web application interfaces and their reported vulnerabilities",
+}
+
+
+def _build_process_query(findings: list[dict]) -> str:
+    """
+    整場掃描的輪廓描述，用來檢索 4-1。
+
+    用「掃了哪些類別」加上「出現過哪些項目標題」組成，而不是逐筆查詢
+    再合併：4-1 的顆粒度是整個開發流程，對「這個產品被掃出這些東西」
+    這個整體現象回答一次才有意義，逐筆問只會讓同樣幾條 practice
+    重複出現 N 次。
+    """
+    categories = []
+    for f in findings:
+        category = f.get("category")
+        if category and category not in categories:
+            categories.append(category)
+
+    parts = [_CATEGORY_QUERY_PHRASES.get(c, c) for c in categories]
+
+    # 標題帶入一部分具體字彙（telnet、outdated OpenSSL…），讓查詢不會
+    # 只剩下三句通用描述而檢索到千篇一律的結果。上限是為了避免整段
+    # 查詢被幾十筆標題稀釋掉。
+    titles = []
+    for f in findings:
+        title = (f.get("title") or "").strip()
+        if title and title not in titles:
+            titles.append(title)
+        if len(titles) >= 15:
+            break
+
+    return " ".join(parts + titles)
+
+
+def scan_level_process_requirements(findings: list[dict]) -> dict | None:
+    """
+    整場掃描查一次 IEC 62443-4-1（開發流程要求），回傳供報告獨立一節使用。
+
+    為什麼不跟 4-2 一樣逐筆查：掃描工具測的是「成品現在長什麼樣」，
+    4-1 規範的是「這個成品是用什麼流程做出來的」。單一筆 finding
+    （例如 "tcp/23 telnet"）跟 "SM-4 安全專業能力" 之間沒有語意相似性，
+    硬要逐筆檢索，得到的只會是分數很低又每筆都一樣的候選。
+
+    這一節的定位必須寫清楚（報告樣板裡也有標示）：它是**自評的起點**，
+    不是符合性判定，更不是完整清單——4-1 全文共 47 條要求，這裡只列
+    語意上跟本次掃描輪廓最接近的前幾條。掃描結果本來就無法證明或
+    否證任何一條流程要求，能不能滿足只有開發流程的文件與紀錄說得算。
+
+    回傳 None 代表這條路徑不可用（知識庫沒建、Qdrant 連不上），
+    呼叫端照常繼續，跟其他 RAG 路徑一致的降級原則。
+    """
+    if retrieve_iec_hybrid is None or not findings:
+        return None
+
+    query = _build_process_query(findings)
+    try:
+        candidates = retrieve_iec_hybrid(query, part="4-1", top_k=PROCESS_SUGGESTION_TOP_K)
+    except Exception as e:
+        print(f"[analysis] IEC 62443-4-1 候選查詢失敗，略過（{e}）")
+        return None
+
+    if not candidates:
+        return None
+
+    return {"query": query, "candidates": candidates}
 
 
 if __name__ == "__main__":

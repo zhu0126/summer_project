@@ -62,20 +62,30 @@
 ### {{ item.title }}（{{ item.target }}）
 
 {% if item.rag_suggestions and item.rag_suggestions.cwe %}
+
 CWE 候選：
 {% for c in item.rag_suggestions.cwe %}
 - `{{ c.cwe_id }}` {{ c.name }}{% if c.score %}（分數 {{ "%.2f" | format(c.score) }}）{% endif %}{% if c.matched_by %} [{{ c.matched_by | join("+") }}]{% endif %}
 
 {% endfor %}
 {% endif %}
+{% if item.rag_suggestions and item.rag_suggestions.iec %}
+
+IEC 62443-4-2 候選（元件技術要求）：
+{% for c in item.rag_suggestions.iec %}
+- {{ c.article_no }} {{ c.title }}{% if c.group %}｜{{ c.group }}{% endif %}{% if c.score %}（分數 {{ "%.2f" | format(c.score) }}）{% endif %}{% if c.matched_by %} [{{ c.matched_by | join("+") }}]{% endif %}
+
+{% endfor %}
+{% endif %}
 {% if item.rag_suggestions and item.rag_suggestions.cra %}
+
 CRA 候選：
 {% for c in item.rag_suggestions.cra %}
 - {{ c.article_no }}（{{ c.title }}{% if c.score %}，分數 {{ "%.2f" | format(c.score) }}{% endif %}）{% if c.matched_by %} [{{ c.matched_by | join("+") }}]{% endif %}
 
 {% endfor %}
 {% endif %}
-{% if not item.rag_suggestions or (not item.rag_suggestions.cwe and not item.rag_suggestions.cra) %}
+{% if not item.rag_suggestions or (not item.rag_suggestions.cwe and not item.rag_suggestions.iec and not item.rag_suggestions.cra) %}
 （語意檢索目前沒有回傳候選，可能是知識庫尚未建立或連線失敗）
 {% endif %}
 {% if item.llm_advice %}
@@ -94,8 +104,29 @@ CRA 候選：
 {% endfor %}
 {% endif %}
 
+{% if process_requirements %}
+## 開發流程面對照（IEC 62443-4-1）
+
+以上章節對照的是產品「現在的狀態」。IEC 62443-4-1 規範的則是「產品是用什麼
+流程開發出來的」——安全需求規格、威脅建模、驗證測試、漏洞處理與更新發布等。
+掃描工具無法測量開發流程，因此以下清單**既不能證明也不能否證**任何一條要求，
+僅依本次掃描的整體輪廓檢索出語意上較接近的條目，作為自評的起點。
+
+**注意：這不是完整清單。** IEC 62443-4-1 全文共 47 條要求，下方只列出前
+{{ process_requirements.candidates | length }} 條；正式自評請以標準原文為準。
+
+{% for c in process_requirements.candidates %}
+- **{{ c.article_no }} {{ c.title }}**{% if c.group %}｜{{ c.group }}{% endif %}{% if c.score %}（分數 {{ "%.2f" | format(c.score) }}）{% endif %}{% if c.matched_by %} [{{ c.matched_by | join("+") }}]{% endif %}
+
+{% endfor %}
+{% endif %}
+
 ---
 
 *本報告部分內容由自動化規則比對與語意檢索產生，其中標示「AI 研判建議」的段落由
 大型語言模型依檢索到的候選資料撰寫，可能有誤讀或引用錯誤。全文均非正式法律意見，
 實際合規判定請諮詢專業人員或法務單位複核。*
+
+*另請注意兩類對照物的效力不同：CRA（Regulation (EU) 2024/2847）是具強制力的歐盟
+法規；IEC 62443 系列是自願性標準，除非產業規範或客戶合約另有要求，對應到某條
+CR/SM 不代表存在法律義務。*

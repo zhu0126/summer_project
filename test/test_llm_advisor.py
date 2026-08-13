@@ -45,6 +45,20 @@ FAKE_CRA = [{
     "matched_by": ["dense"],
 }]
 
+# IEC 的 article_no 自帶標準名稱前綴，這是它跟 CRA 最大的格式差異——
+# 下游要嘛整串比對，要嘛剝掉前綴比對，兩種都得成立。
+FAKE_IEC = [{
+    "article_no": "IEC 62443-4-2 CR 1.7",
+    "clause_id": "CR 1.7",
+    "standard": "IEC 62443-4-2",
+    "title": "Strength of password-based authentication",
+    "group": "FR 1 – Identification and authentication control",
+    "text": "Requirement:\nComponents shall provide the capability to enforce "
+            "configurable password strength.",
+    "score": 0.58,
+    "matched_by": ["sparse"],
+}]
+
 failures = []
 
 
@@ -80,6 +94,26 @@ check("來源白名單涵蓋兩個知識庫",
       collect_source_ids(FAKE_CWE, FAKE_CRA) == ["CWE-319", "Annex I Part\xa0I (2)(a)"])
 
 print()
+print("==== rag_context：IEC 62443 ====")
+
+check("IEC 前綴判為 standard", entry_kind("IEC 62443-4-2 CR 1.7") == "standard")
+
+iec_context = build_context(FAKE_CWE, FAKE_CRA, FAKE_IEC)
+check("context 帶上 IEC 條號", "IEC 62443-4-2 CR 1.7" in iec_context)
+check("context 帶上 IEC 的 FR 分類", "FR 1 – Identification" in iec_context)
+check("IEC 標頭不重複標準名稱",
+      "IEC 62443-4-2 IEC 62443-4-2" not in iec_context)
+check("順序是 CWE → IEC → CRA",
+      iec_context.index("CWE-319") < iec_context.index("CR 1.7") < iec_context.index("Annex I"))
+
+check("來源白名單涵蓋三個知識庫",
+      collect_source_ids(FAKE_CWE, FAKE_CRA, FAKE_IEC)
+      == ["CWE-319", "Annex I Part\xa0I (2)(a)", "IEC 62443-4-2 CR 1.7"])
+
+check("不傳 iec 時行為與舊版一致",
+      build_context(FAKE_CWE, FAKE_CRA) == build_context(FAKE_CWE, FAKE_CRA, []))
+
+print()
 print("==== llm_advisor：引用查核 ====")
 
 allowed = collect_source_ids(FAKE_CWE, FAKE_CRA)
@@ -102,6 +136,49 @@ check("同一個錯誤引用只回報一次",
 check("沒有任何引用時回空清單",
       llm_advisor.verify_citations("檢索到的候選與本項無明確關聯。", allowed) == [])
 
+# 前綴比對的邊界檢查。舊版用裸 startswith()，"article 13" 會被
+# "article 1" 涵蓋，白名單有 Article 13 時模型編造的 Article 1
+# 就被靜默放行——引用查核最該擋下來的那種錯誤反而漏掉。
+check("數字前綴不算涵蓋（Article 1 vs Article 13）",
+      llm_advisor.verify_citations("依 Article 1 規定。", ["Article 13"]) == ["Article 1"])
+
+check("編號完全相同仍算涵蓋",
+      llm_advisor.verify_citations("依 Article 13 規定。", ["Article 13"]) == [])
+
+check("Annex 上層編號仍算涵蓋（斷在空白）",
+      llm_advisor.verify_citations("參見 Annex I Part I。",
+                                   ["Annex I Part\xa0I (2)(a)"]) == [])
+
+print()
+print("==== llm_advisor：IEC 62443 引用查核 ====")
+
+iec_allowed = collect_source_ids(FAKE_CWE, FAKE_CRA, FAKE_IEC)
+
+check("完整寫出 IEC 條號不被誤報",
+      llm_advisor.verify_citations("依 IEC 62443-4-2 CR 1.7 要求。", iec_allowed) == [])
+
+check("省略標準名稱前綴也不被誤報",
+      llm_advisor.verify_citations("依 CR 1.7 要求。", iec_allowed) == [])
+
+check("編造的 CR 編號會被抓出來",
+      llm_advisor.verify_citations("另依 CR 3.9 之規定。", iec_allowed) == ["CR 3.9"])
+
+# CR 1.1 是 CR 1.11~1.14 的字串前綴，58 條 CR 裡這種關係一大票，
+# 邊界判斷沒做好會讓一整批編造的條號被放行。
+check("CR 1.1 不涵蓋 CR 1.11",
+      llm_advisor.verify_citations("依 CR 1.11 要求。",
+                                   ["IEC 62443-4-2 CR 1.1"]) == ["CR 1.11"])
+
+check("requirement enhancement 後綴算涵蓋",
+      llm_advisor.verify_citations("依 CR 1.7 RE(1) 要求。", iec_allowed) == [])
+
+check("編造的 4-1 流程要求會被抓出來",
+      llm_advisor.verify_citations("另見 SVV-4 滲透測試。", iec_allowed) == ["SVV-4"])
+
+check("4-1 條號在白名單內時不被誤報",
+      llm_advisor.verify_citations("另見 IEC 62443-4-1 SVV-4。",
+                                   ["IEC 62443-4-1 SVV-4"]) == [])
+
 print()
 print("==== llm_advisor：advise_finding 流程 ====")
 
@@ -118,7 +195,7 @@ original_ask = llm_advisor.ask_gemini
 llm_advisor.ask_gemini = _must_not_be_called
 try:
     check("沒有候選時不呼叫 LLM 且回 None",
-          llm_advisor.advise_finding(finding, {"cwe": [], "cra": []}) is None)
+          llm_advisor.advise_finding(finding, {"cwe": [], "cra": [], "iec": []}) is None)
     check("suggestions 為 None 時也回 None",
           llm_advisor.advise_finding(finding, None) is None)
 finally:
@@ -145,10 +222,35 @@ if advice:
     check("prompt 帶入 detail 欄位", "service: telnet" in captured["prompt"])
     check("prompt 帶入檢索到的參考資料", "CWE-319" in captured["prompt"])
     check("system instruction 要求只用參考資料作答", "ONLY" in captured["system"])
+    check("system instruction 涵蓋 62443 段落", "62443" in captured["system"])
     check("sources 記錄實際餵進去的來源", advice["sources"] == allowed)
     check("回覆裡編造的條號被標記出來",
           advice["unsupported_citations"] == ["Article 54"],
           str(advice["unsupported_citations"]))
+
+# 只有 IEC 候選、CWE/CRA 都空的情況也要送得出請求——短路條件漏掉
+# 任何一個知識庫，就會變成「明明檢索到東西卻不呼叫 LLM」。
+iec_only_captured = {}
+
+
+def _capture_iec_only(system_instruction, prompt):
+    iec_only_captured["prompt"] = prompt
+    return "【62443 對應】IEC 62443-4-2 CR 1.7 要求可設定的密碼強度。"
+
+
+llm_advisor.ask_gemini = _capture_iec_only
+try:
+    iec_advice = llm_advisor.advise_finding(finding, {"cwe": [], "cra": [], "iec": FAKE_IEC})
+finally:
+    llm_advisor.ask_gemini = original_ask
+
+check("只有 IEC 候選時仍會呼叫 LLM", iec_advice is not None)
+if iec_advice:
+    check("prompt 帶入 IEC 條文", "CR 1.7" in iec_only_captured["prompt"])
+    check("IEC 來源進入白名單", iec_advice["sources"] == ["IEC 62443-4-2 CR 1.7"])
+    check("正確引用 IEC 條號不被誤報",
+          iec_advice["unsupported_citations"] == [],
+          str(iec_advice["unsupported_citations"]))
 
 # ask_gemini 回 None（沒金鑰/API 掛掉）時，整條路徑要安靜降級成 None，
 # 而不是丟例外把報告產生流程一起帶走。

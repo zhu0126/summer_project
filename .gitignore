@@ -16,4 +16,8 @@ webapp/backend/uploads/
 md_to_pdf/report_*.md
 md_to_pdf/report_*.pdf
 
+# IEC 62443 是付費標準，解析出來的 json 含標準原文，不可進版控或散布。
+# （CWE/CRA 的資料檔沒有這個限制，來源本身就是公開全文。）
+iec_kb/iec_data/
+
 .env

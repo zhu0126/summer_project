@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
-RAG 的「context 組裝層」：把 retrieve_cwe_hybrid() / retrieve_cra_hybrid()
-回傳的候選清單，整理成一段可以直接餵給 LLM 的參考資料字串。
+RAG 的「context 組裝層」：把 retrieve_cwe_hybrid() / retrieve_iec_hybrid() /
+retrieve_cra_hybrid() 回傳的候選清單，整理成一段可以直接餵給 LLM 的
+參考資料字串。
 
 為什麼要獨立出這一層：檢索層（cwe_kb/cra_kb）回傳的是結構化 dict，
 報告樣板（report.md.j2）消費的也是結構化 dict，兩邊都不需要「一整段
@@ -39,11 +40,15 @@ ENTRY_SEPARATOR = "\n\n---\n\n"
 
 def entry_kind(article_no: str) -> str:
     """
-    從 article_no 前綴判斷這筆是條文還是附錄。
-    fetch_cra.py 產生的編號一律是 "Article N" 或 "Annex <羅馬數字> ..."
-    這兩種開頭，不需要額外的 metadata 欄位。
+    從 article_no 前綴判斷這筆的種類。
+    fetch_cra.py 產生的編號一律是 "Article N" 或 "Annex <羅馬數字> ..."，
+    fetch_iec.py 產生的一律是 "IEC 62443-4-x <ID>"，都不需要額外的
+    metadata 欄位就能分辨。
     """
-    return "annex" if article_no.strip().lower().startswith("annex") else "article"
+    prefix = article_no.strip().lower()
+    if prefix.startswith("iec "):
+        return "standard"
+    return "annex" if prefix.startswith("annex") else "article"
 
 
 def _truncate(text: str) -> str:
@@ -53,22 +58,44 @@ def _truncate(text: str) -> str:
     return text[:MAX_CHARS_PER_ENTRY].rstrip() + TRUNCATION_MARK
 
 
-def format_cra_entry(entry: dict) -> str:
+def format_clause_entry(entry: dict, prefix: str = "") -> str:
     """
-    單筆 CRA 候選 → "[來源標頭]\\n內文"。
+    單筆條文/要求候選 → "[來源標頭]\\n內文"。CRA 跟 IEC 62443 共用這一支。
 
     標頭一定要放 article_no，這是 LLM 之後引用時唯一該寫出來的識別字串，
     也是下游 verify_citations() 用來檢查「LLM 引用的條號有沒有真的出現在
     我們給的資料裡」的依據。
+
+    prefix 是給 CRA 用的（它的 article_no 是裸的 "Article 13"，需要補上
+    來源名稱才知道是哪部法規）；IEC 的 article_no 本身已經含
+    "IEC 62443-4-2" 前綴，不需要再補，否則標頭會變成重複的
+    "[IEC 62443-4-2 IEC 62443-4-2 CR 1.7]"。
+
+    group 只有 IEC 有（"FR 4 – Data confidentiality" 這種上層分類），
+    帶進標頭是因為它說明了這條要求屬於哪個安全面向，對 LLM 判斷「這條
+    跟這筆掃描結果是不是同一件事」很有幫助，成本只有幾個 token。
     """
     article_no = entry.get("article_no", "?")
     title = (entry.get("title") or "").strip()
+    group = (entry.get("group") or "").strip()
 
-    header = article_no
+    header = f"{prefix}{article_no}"
     if title and title != article_no:
         header += f" — {title}"
+    if group:
+        header += f"（{group}）"
 
-    return f"[CRA {header}]\n{_truncate(entry.get('text', ''))}"
+    return f"[{header}]\n{_truncate(entry.get('text', ''))}"
+
+
+def format_cra_entry(entry: dict) -> str:
+    """單筆 CRA 候選。CRA 的 article_no 是裸條號，標頭要補上來源名稱。"""
+    return format_clause_entry(entry, prefix="CRA ")
+
+
+def format_iec_entry(entry: dict) -> str:
+    """單筆 IEC 62443 候選。article_no 已含標準名稱，不再加前綴。"""
+    return format_clause_entry(entry)
 
 
 def format_cwe_entry(entry: dict) -> str:
@@ -99,28 +126,39 @@ def format_cwe_entry(entry: dict) -> str:
     return "\n".join(p for p in parts if p)
 
 
-def collect_source_ids(cwe_entries: list[dict] | None, cra_entries: list[dict] | None) -> list[str]:
+def collect_source_ids(
+    cwe_entries: list[dict] | None,
+    cra_entries: list[dict] | None,
+    iec_entries: list[dict] | None = None,
+) -> list[str]:
     """
     回傳這次餵進 context 的所有來源識別字串（CWE-79 / Article 13 /
-    Annex I Part I (2)(a) ...）。這份清單是「LLM 被允許引用的範圍」，
-    verify_citations() 拿它當白名單做事後檢查。
+    Annex I Part I (2)(a) / IEC 62443-4-2 CR 1.7 ...）。這份清單是
+    「LLM 被允許引用的範圍」，verify_citations() 拿它當白名單做事後檢查。
+
+    新增知識庫時，這裡漏掉是最容易犯又最難察覺的錯：白名單少了某個
+    來源，LLM 引用它會被誤判成幻覺，報告上會出現「引用查核未通過」的
+    紅字警告，但那條引用其實完全正確。
     """
     ids = [e.get("cwe_id", "") for e in (cwe_entries or [])]
     ids += [e.get("article_no", "") for e in (cra_entries or [])]
+    ids += [e.get("article_no", "") for e in (iec_entries or [])]
     return [i for i in ids if i]
 
 
 def build_context(
     cwe_entries: list[dict] | None = None,
     cra_entries: list[dict] | None = None,
+    iec_entries: list[dict] | None = None,
 ) -> str:
     """
-    把 CWE + CRA 兩份候選組成單一段參考資料文字。
+    把 CWE + IEC 62443 + CRA 三份候選組成單一段參考資料文字。
 
-    順序刻意是「先 CWE 後 CRA」：CWE 描述的是弱點本身（這是什麼問題、
-    怎麼修），CRA 描述的是法規義務（這件事為什麼在歐盟必須處理）。
-    先讀弱點再讀法規，比較接近人工複核時的思考順序，也讓 LLM 產出的
-    段落順序（研判 → 修補 → 法規對應）自然一致。
+    順序刻意是「CWE → IEC → CRA」，對應人工複核時的思考順序：
+    CWE 說明這是什麼弱點（問題是什麼），62443-4-2 說明元件層級該具備
+    什麼能力才算處理掉它（技術上要做什麼），CRA 說明這件事在歐盟為什麼
+    是義務（法律上為什麼非做不可）。由技術到法規，也讓 LLM 產出的段落
+    順序（研判 → 修補 → 條文對應）自然一致。
 
     總長度超過 MAX_CONTEXT_CHARS 時，停止加入剩下的候選並在結尾標記，
     不做靜默捨棄——「有東西沒被讀進去」這件事必須看得見。
@@ -130,6 +168,7 @@ def build_context(
     dropped = 0
 
     formatted = [format_cwe_entry(e) for e in (cwe_entries or [])]
+    formatted += [format_iec_entry(e) for e in (iec_entries or [])]
     formatted += [format_cra_entry(e) for e in (cra_entries or [])]
 
     for block in formatted:
@@ -157,6 +196,13 @@ if __name__ == "__main__":
         "title": "Part I Essential cybersecurity requirements",
         "text": "protect the confidentiality of stored, transmitted or otherwise processed data...",
     }]
-    print(build_context(sample_cwe, sample_cra))
+    sample_iec = [{
+        "article_no": "IEC 62443-4-2 CR 4.1",
+        "title": "Information confidentiality",
+        "group": "FR 4 – Data confidentiality",
+        "text": "Requirement:\nComponents shall provide the capability to protect the "
+                "confidentiality of information at rest...",
+    }]
+    print(build_context(sample_cwe, sample_cra, sample_iec))
     print()
-    print("來源白名單：", collect_source_ids(sample_cwe, sample_cra))
+    print("來源白名單：", collect_source_ids(sample_cwe, sample_cra, sample_iec))

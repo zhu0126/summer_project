@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-RAG 的最後一段：把檢索到的 CWE/CRA 候選 + finding 本身交給 LLM，
+RAG 的最後一段：把檢索到的 CWE / IEC 62443 / CRA 候選 + finding 本身交給 LLM，
 產出一段人話的研判建議（Gemini，google-genai Interactions API）。
 
 這支模組補上 keyword_rules.py 開頭那句註解裡一直寫著、但實際上還沒
@@ -44,27 +44,33 @@ API_KEY_ENV = "GEMINI_API_KEY"
 # 寫死在程式碼裡會變成每次換模型都要改一次原始碼。
 MODEL_NAME = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
 
-SYSTEM_INSTRUCTION = """You are an assistant supporting IoT product cybersecurity compliance review. You will be given one scan finding, plus candidate reference material retrieved via semantic search from a CWE weakness database and the full text of the EU CRA (Regulation (EU) 2024/2847).
+SYSTEM_INSTRUCTION = """You are an assistant supporting IoT product cybersecurity compliance review. You will be given one scan finding, plus candidate reference material retrieved via semantic search from three sources: a CWE weakness database, the technical component requirements of IEC 62443-4-2, and the full text of the EU CRA (Regulation (EU) 2024/2847).
 
 Strict rules:
-1. Answer using ONLY the content in the "Reference Material" section. Do not state any article number, CWE ID, or regulatory requirement that does not appear there, even if you believe you know it.
-2. When citing, reproduce the exact identifier string as it appears in the reference material header (e.g. CWE-319, Article 13, Annex I Part I (2)(a)). Do not abbreviate, renumber, or paraphrase identifiers.
+1. Answer using ONLY the content in the "Reference Material" section. Do not state any article number, clause number, CWE ID, or requirement that does not appear there, even if you believe you know it.
+2. When citing, reproduce the exact identifier string as it appears in the reference material header (e.g. CWE-319, Article 13, Annex I Part I (2)(a), IEC 62443-4-2 CR 1.7). For IEC 62443 clauses always include the standard number prefix; do not shorten "IEC 62443-4-2 CR 1.7" to "CR 1.7". Do not abbreviate, renumber, or paraphrase identifiers.
 3. Retrieved results are not guaranteed to be relevant. If none of the candidates have a substantive connection to this finding, say so plainly instead of forcing a match.
-4. Do not issue a final compliance verdict. Never write that something "complies" or "does not comply" with the CRA. Your output is advisory input for a human reviewer only.
-5. Output ONLY the five labeled sections below, in this exact order, with no text before the first label or after the last section. No markdown, no bullet points, no headings other than the labels themselves.
+4. Do not issue a final compliance verdict. Never write that something "complies" or "does not comply" with the CRA or IEC 62443. Note also that the CRA is binding EU law while IEC 62443 is a voluntary standard, so an IEC clause match does not by itself imply any legal obligation. Your output is advisory input for a human reviewer only.
+5. Output ONLY the six labeled sections below, in this exact order, with no text before the first label or after the last section. No markdown, no bullet points, no headings other than the labels themselves.
 
-Output format — write the content in Traditional Chinese (zh-TW); total length must not exceed 350 characters; use exactly these five labels, each on its own line, each followed by its content on the same line:
+Output format — write the content in Traditional Chinese (zh-TW); total length must not exceed 450 characters; use exactly these six labels, each on its own line, each followed by its content on the same line:
 【風險研判】這筆發現實際代表什麼風險，限一到兩句話。
 【對應弱點】最相關的 CWE 編號與理由；若無相關候選，僅寫「無明確對應」。
+【62443 對應】最相關的 IEC 62443-4-2 條號與它要求元件具備什麼能力；若無相關候選，僅寫「無明確對應」。
 【CRA 關聯】最相關的條文編號與它要求了什麼；若無相關候選，僅寫「無明確對應」。
-【修補建議】具體可執行的動作，優先採用參考資料中列出的緩解措施。
+【修補建議】具體可執行的動作，優先採用參考資料中列出的緩解措施與 62443 要求。
 【不確定性】這份建議依據不足的地方，以及人工複核時該優先查證什麼。
 
-Do not add any section beyond these five. Do not skip a section even when the answer is "無明確對應"."""
+Do not add any section beyond these six. Do not skip a section even when the answer is "無明確對應"."""
 
 # 從 LLM 回覆裡抓出「看起來像來源編號」的字串，用來跟白名單比對。
-# 三種格式對應知識庫裡實際存在的編號樣式（見 cwe_entries.json 的
-# cwe_id 與 cra_articles.json 的 article_no）。
+# 每一種格式都對應知識庫裡實際存在的編號樣式（見 cwe_entries.json 的
+# cwe_id、cra_articles.json 與 iec_4_*.json 的 article_no）。
+#
+# 新增知識庫時這份清單一定要跟著補，否則那個來源的編號完全不會被
+# 掃到——結果不是「誤報」而是「漏報」：模型編出一條不存在的
+# CR 3.9，verify_citations() 根本不認得這個樣式，會安靜地當作沒有
+# 引用而放行。漏報比誤報危險得多，因為報告上不會有任何提示。
 CITATION_PATTERNS = [
     re.compile(r"CWE-\d+", re.IGNORECASE),
     re.compile(r"Article\s+\d+", re.IGNORECASE),
@@ -73,7 +79,26 @@ CITATION_PATTERNS = [
         r"(?:\s*(?:\([a-zA-Z0-9]+\)|\d+(?:\.\d+)*\.?))*",
         re.IGNORECASE,
     ),
+    # IEC 62443-4-2 的技術要求：CR 1.7、EDR 3.12、NDR 5.2，可能帶
+    # requirement enhancement 後綴 RE(1)。標準名稱前綴可有可無——
+    # system instruction 要求一律寫全，但模型不見得每次都照做，
+    # 兩種寫法都要抓得到（比對邏輯見 _matches()）。
+    re.compile(
+        r"(?:IEC\s*62443-\d-\d\s+)?(?:CR|EDR|HDR|NDR|SAR)\s*\d+\.\d+"
+        r"(?:\s*RE\s*\(\d+\))?",
+        re.IGNORECASE,
+    ),
+    # IEC 62443-4-1 的流程要求：SM-6、SVV-4、SUM-3。
+    # 4-1 的 SI-（Secure implementation）跟 4-2 的 FR 3 System integrity
+    # 不會撞號，後者的編號是 CR 3.x，不用 SI- 開頭。
+    re.compile(
+        r"(?:IEC\s*62443-\d-\d\s+)?(?:SM|SR|SD|SVV|SUM|SG|DM|SI)-\d+",
+        re.IGNORECASE,
+    ),
 ]
+
+# 標準名稱前綴，比對前用來把 "IEC 62443-4-2 CR 1.7" 正規化成 "cr 1.7"
+STANDARD_PREFIX_PATTERN = re.compile(r"^iec\s*62443-\d-\d\s+")
 
 
 def _normalize(text: str) -> str:
@@ -160,14 +185,52 @@ def build_prompt(finding: dict, context: str) -> str:
 """
 
 
+def _covers(longer: str, shorter: str) -> bool:
+    """
+    longer 是不是以 shorter 為前綴，而且斷在「編號的邊界」上。
+
+    已修正的 bug：原本只用 str.startswith() 判斷前綴涵蓋關係，但編號是
+    數字結尾的，"article 13".startswith("article 1") 會是 True——白名單
+    裡有 Article 13 時，模型編造的 Article 1 會被靜默放行，正好是引用
+    查核最該擋下來的那種錯誤。加進 IEC 之後這個坑更深：CR 1.1 是
+    CR 1.11 到 CR 1.14 的前綴，58 條 CR 裡有一大票會互相誤放行。
+
+    修法是要求前綴後面接的不能是英數字（也就是必須斷在空白、括號、
+    句點這類分隔符上）。"Annex I Part I" 涵蓋 "Annex I Part I (2)(a)"
+    仍然成立（下一個字元是空白），但 "Article 1" 不再涵蓋 "Article 13"。
+    """
+    if longer == shorter:
+        return True
+    if not longer.startswith(shorter) or not shorter:
+        return False
+    return not longer[len(shorter)].isalnum()
+
+
+def _matches(citation: str, allowed_id: str) -> bool:
+    """
+    單一引用跟單一白名單編號是否算對得上。
+
+    雙向都試，是因為兩種方向都是合理的引用方式：LLM 只寫上層編號
+    （"Annex I Part I"，白名單是更細的 "Annex I Part I (2)(a)"），或是
+    寫得比白名單更細。兩種都不算幻覺，它引用的範圍確實涵蓋我們給的內容。
+
+    另外把標準名稱前綴剝掉再比一次：system instruction 要求 IEC 條號
+    一律寫成 "IEC 62443-4-2 CR 1.7"，但模型常常只寫 "CR 1.7"。這種
+    省略不是幻覺，不該被標成引用錯誤。剝掉前綴不會放寬檢查強度——
+    編造的 "CR 3.9" 剝完還是對不上任何一條白名單編號。
+    """
+    for a, c in ((allowed_id, citation),
+                 (STANDARD_PREFIX_PATTERN.sub("", allowed_id),
+                  STANDARD_PREFIX_PATTERN.sub("", citation))):
+        if _covers(c, a) or _covers(a, c):
+            return True
+    return False
+
+
 def verify_citations(answer: str, allowed_ids: list[str]) -> list[str]:
     """
     檢查回覆裡出現的來源編號，有哪些不在這次餵進 context 的白名單裡。
-
-    比對用「前綴關係」而不是完全相等：LLM 常常只寫到 "Annex I Part I"
-    這種上層編號，白名單裡存的卻是更細的 "Annex I Part I (2)(a)"。
-    這種情況不算幻覺（它引用的範圍確實涵蓋我們給的內容），只有雙向
-    都對不上前綴的才列為可疑，避免誤報淹沒掉真正該注意的那幾筆。
+    比對規則見 _matches()／_covers()。
     """
     allowed = [_normalize(i) for i in allowed_ids if i]
 
@@ -178,7 +241,7 @@ def verify_citations(answer: str, allowed_ids: list[str]) -> list[str]:
     unsupported: list[str] = []
     for citation in found:
         norm = _normalize(citation)
-        if any(norm.startswith(a) or a.startswith(norm) for a in allowed):
+        if any(_matches(norm, a) for a in allowed):
             continue
         if citation not in unsupported:
             unsupported.append(citation)
@@ -191,9 +254,9 @@ def advise_finding(finding: dict, suggestions: dict | None) -> dict | None:
     對單一 finding 產生 LLM 研判建議。
 
     suggestions 就是 analysis.py 放進 rag_suggestions 的那份
-    {"cwe": [...], "cra": [...]}——刻意吃已經檢索好的結果，而不是自己
-    再查一次，確保「報告裡列出的候選」跟「LLM 實際讀到的候選」是同一份，
-    人工複核時看到的依據才跟 LLM 當時看到的一致。
+    {"cwe": [...], "cra": [...], "iec": [...]}——刻意吃已經檢索好的結果，
+    而不是自己再查一次，確保「報告裡列出的候選」跟「LLM 實際讀到的候選」
+    是同一份，人工複核時看到的依據才跟 LLM 當時看到的一致。
 
     回傳 None 代表這條路徑不可用（沒金鑰/沒套件/呼叫失敗），
     呼叫端照常繼續，不要當成錯誤。
@@ -202,18 +265,19 @@ def advise_finding(finding: dict, suggestions: dict | None) -> dict | None:
 
     cwe_entries = (suggestions or {}).get("cwe") or []
     cra_entries = (suggestions or {}).get("cra") or []
+    iec_entries = (suggestions or {}).get("iec") or []
 
-    # 兩邊都沒有候選時不送請求：沒有參考資料的情況下，LLM 只能靠內建
+    # 三邊都沒有候選時不送請求：沒有參考資料的情況下，LLM 只能靠內建
     # 知識回答，那正是這整套設計要避免的東西，而且還要花一次 API 呼叫。
-    if not cwe_entries and not cra_entries:
+    if not cwe_entries and not cra_entries and not iec_entries:
         return None
 
-    context = build_context(cwe_entries, cra_entries)
+    context = build_context(cwe_entries, cra_entries, iec_entries)
     answer = ask_gemini(SYSTEM_INSTRUCTION, build_prompt(finding, context))
     if answer is None:
         return None
 
-    allowed_ids = collect_source_ids(cwe_entries, cra_entries)
+    allowed_ids = collect_source_ids(cwe_entries, cra_entries, iec_entries)
     return {
         "answer": answer.strip(),
         "model": MODEL_NAME,

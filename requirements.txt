@@ -8,9 +8,16 @@ python-dotenv>=1.0.0,<2.0
 qdrant-client>=2.7.0,<3.0
 fastembed>=0.2.0,<1.0
 
-# Web scraping & parsing
+# Hybrid retrieval: BM25 sparse search (core/hybrid_search.py).
+# Missing this silently degrades every retrieve_*_hybrid() to dense-only.
+rank-bm25>=0.2.2,<1.0
+
+# Knowledge base ingestion
 beautifulsoup4>=4.12.0,<5.0
 requests>=2.31.0,<3.0
+# PDF parsing for the IEC 62443 knowledge base (iec_kb/fetch_iec.py).
+# Only needed when (re)building that index from your own licensed PDFs.
+pdfplumber>=0.10.0,<1.0
 
 # LLM integration
 google-genai>=0.1.0
