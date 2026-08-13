@@ -9,12 +9,10 @@ set_output_dir() 是全域狀態，不是 thread-local）互相干擾，要做�
 「多工作並行」需要更大的重構（例如每個 job 開獨立 process），對
 「先在本地跑起來」這個目標來說不是必要的第一步。
 """
-import io
 import shutil
 import sys
 import threading
 import uuid
-from contextlib import redirect_stdout
 from pathlib import Path
 
 from fastapi import FastAPI, UploadFile, Form, File, HTTPException
@@ -55,31 +53,50 @@ app.add_middleware(
 _lock = threading.Lock()
 _job: dict | None = None  # 目前唯一的一份 job 狀態（單一工作佇列，不支援並行）
 
+# 掃描進度的階段清單跟顯示用標籤。跟 core/project.py 的 progress_cb
+# 呼叫時用的 stage 字串一一對應——這裡只負責「怎麼顯示」，實際
+# 「什麼時候切換到哪個狀態」的邏輯留在 project.py 那邊決定。
+STAGE_LABELS = {
+    "nmap": "Network scan (nmap)",
+    "firmware": "Firmware scan (binwalk)",
+    "zap": "Web app scan (ZAP)",
+    "analysis": "法規 Mapping",
+    "report": "報告產出",
+}
 
-class _LogCapture(io.TextIOBase):
-    """
-    把 print() 輸出即時累積進 job["log"] 這個 list，讓前端可以輪詢到
-    掃描進行中的即時輸出，而不是整個 pipeline 跑完才一次看到全部內容。
-    """
-    def __init__(self, job_ref: dict):
-        self.job_ref = job_ref
 
-    def write(self, s: str) -> int:
-        if s.strip():
-            self.job_ref["log"].append(s.rstrip("\n"))
-        return len(s)
+def _build_initial_stages(ip: str | None, firmware: str | None, url: str | None, make_report: bool) -> dict:
+    """
+    掃描開始前就能決定每個階段是否會執行：有沒有提供對應目標、
+    有沒有勾選產生報告。不會執行的階段直接標成 skipped（不執行），
+    不用等 pipeline 跑到那一步才知道會跳過。
+    """
+    return {
+        "nmap": {"label": STAGE_LABELS["nmap"], "status": "pending" if ip else "skipped"},
+        "firmware": {"label": STAGE_LABELS["firmware"], "status": "pending" if firmware else "skipped"},
+        "zap": {"label": STAGE_LABELS["zap"], "status": "pending" if url else "skipped"},
+        "analysis": {"label": STAGE_LABELS["analysis"], "status": "pending"},
+        "report": {"label": STAGE_LABELS["report"], "status": "pending" if make_report else "skipped"},
+    }
 
 
 def _run_job(job_ref: dict, params: dict) -> None:
-    capture = _LogCapture(job_ref)
+    def _progress_cb(stage: str, status: str) -> None:
+        if stage in job_ref["stages"]:
+            job_ref["stages"][stage]["status"] = status
+
     try:
-        with redirect_stdout(capture):
-            result = project.run_pipeline(**params)
+        result = project.run_pipeline(progress_cb=_progress_cb, **params)
         job_ref["status"] = "done"
         job_ref["result"] = result
     except Exception as e:
         job_ref["status"] = "error"
         job_ref["error"] = str(e)
+        # pipeline 中途拋出例外時，還停在 pending/running 的階段一律標成
+        # error，不然前端會停在「進行中」轉圈圈，看起來像卡住而不是失敗。
+        for stage in job_ref["stages"].values():
+            if stage["status"] in ("pending", "running"):
+                stage["status"] = "error"
     finally:
         # 清掉這次上傳的韌體暫存檔（如果有），pipeline 執行完已經不需要
         # 原始檔案了，避免 uploads/ 資料夾一直累積舊檔案佔用磁碟空間。
@@ -146,7 +163,13 @@ async def start_scan(
                 shutil.copyfileobj(firmware_file.file, f)
 
         job_id = uuid.uuid4().hex[:12]
-        job_ref = {"id": job_id, "status": "running", "log": [], "result": None, "error": None}
+        job_ref = {
+            "id": job_id,
+            "status": "running",
+            "stages": _build_initial_stages(ip.strip() or None, firmware_path, url.strip() or None, make_report),
+            "result": None,
+            "error": None,
+        }
         _job = job_ref
 
         params = dict(

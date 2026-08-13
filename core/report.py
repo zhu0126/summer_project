@@ -85,20 +85,20 @@ def group_by_target(merged_findings: list[dict]) -> list[dict]:
     return [{"target": target, "findings": items} for target, items in groups.items()]
 
 
-def render_report(findings: list[dict], scan_metadata: dict, use_llm: bool = False) -> str:
+def render_report_from_merged(
+    merged_findings: list[dict], process_requirements: dict | None, scan_metadata: dict
+) -> str:
     """
-    use_llm=True 時，待複核項目會額外附上一段 LLM 依檢索結果寫出的
-    研判建議（需要 GEMINI_API_KEY，見 core/llm_advisor.py）。預設關閉，
-    沒開的時候報告內容跟以前完全一樣。
+    純粹的樣板 render 步驟，吃已經算好的 merged_findings/process_requirements。
 
-    process_requirements（IEC 62443-4-1 開發流程要求）是整場掃描查一次
-    的結果，不隨 use_llm 開關——它不經過 LLM，只是檢索結果，沒有理由
-    綁在 LLM 這個選項上。知識庫沒建時是 None，樣板會整節略過。
+    拆出這一層是因為 Web 後端（webapp/backend/main.py）需要把「規則比對 +
+    RAG 檢索」這個法規 Mapping 階段的結果，同時餵給 Findings/Compliance
+    頁面的 API 回應*跟*這裡的 Markdown 報告——如果 render_report() 內部
+    自己重跑一次 analyze_findings()，等於同一批 finding 對 RAG 知識庫
+    查兩次，白白多付一次檢索成本，兩邊結果理論上還可能因為外部服務
+    狀態不同而兜不起來。
     """
-    analysis_results = analyze_findings(findings, use_llm=use_llm)
-    merged_findings = merge_findings_and_analysis(findings, analysis_results)
     finding_groups = group_by_target(merged_findings)
-    process_requirements = scan_level_process_requirements(findings)
 
     env = Environment(
         loader=FileSystemLoader(str(TEMPLATE_DIR)),
@@ -113,6 +113,22 @@ def render_report(findings: list[dict], scan_metadata: dict, use_llm: bool = Fal
         finding_groups=finding_groups,
         process_requirements=process_requirements,
     )
+
+
+def render_report(findings: list[dict], scan_metadata: dict, use_llm: bool = False) -> str:
+    """
+    use_llm=True 時，待複核項目會額外附上一段 LLM 依檢索結果寫出的
+    研判建議（需要 GEMINI_API_KEY，見 core/llm_advisor.py）。預設關閉，
+    沒開的時候報告內容跟以前完全一樣。
+
+    獨立執行時（CLI 的 report.py，或還沒算過 merged_findings 的呼叫端）
+    才會走到這裡自己跑一次分析；project.py 的 pipeline 已經算好
+    merged_findings，會直接呼叫 render_report_from_merged() 省掉重算。
+    """
+    analysis_results = analyze_findings(findings, use_llm=use_llm)
+    merged_findings = merge_findings_and_analysis(findings, analysis_results)
+    process_requirements = scan_level_process_requirements(findings)
+    return render_report_from_merged(merged_findings, process_requirements, scan_metadata)
 
 
 def save_report(content: str, base_name: str) -> str:

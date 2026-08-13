@@ -237,44 +237,67 @@
   button#run-btn:hover { filter: brightness(1.08); }
   button#run-btn:disabled { background: var(--border); color: var(--text-faint); cursor: not-allowed; }
 
-  .log-panel {
-    background: #0B1424;
+  /* ---- Scan progress ---- */
+  .stage-list { display: flex; flex-direction: column; gap: 8px; }
+
+  .stage-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 14px;
+    background: var(--panel);
     border: 1px solid var(--border);
     border-radius: 4px;
-    padding: 14px 16px;
-    height: 340px;
-    overflow-y: auto;
+  }
+
+  .stage-row .stage-name { font-size: 13px; }
+
+  .stage-pill {
     font-family: "IBM Plex Mono", monospace;
-    font-size: 12.5px;
-    color: #C3D2EF;
-    white-space: pre-wrap;
-    word-break: break-all;
+    font-size: 11px;
+    padding: 3px 10px;
+    border-radius: 12px;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    border: 1px solid var(--border);
+    color: var(--text-faint);
   }
-  .log-panel .placeholder { color: var(--text-faint); }
-  .log-line { margin-bottom: 2px; }
+  .stage-pill .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--text-faint); }
 
-  .cursor {
-    display: inline-block;
-    width: 7px;
-    height: 13px;
-    background: var(--accent);
-    vertical-align: text-bottom;
-    animation: blink 1s step-end infinite;
-  }
-  @keyframes blink { 50% { opacity: 0; } }
+  .stage-pill.pending { color: var(--text-faint); }
+  .stage-pill.skipped { color: var(--text-faint); opacity: 0.7; }
 
-  .results {
-    display: none;
-  }
-  .results.visible { display: block; }
+  .stage-pill.running { color: var(--accent); border-color: var(--accent-dim); }
+  .stage-pill.running .dot { background: var(--accent); animation: pulse 1.1s ease-in-out infinite; }
 
-  .result-summary {
-    font-family: "IBM Plex Mono", monospace;
-    font-size: 13px;
-    color: var(--text-dim);
-    margin-bottom: 14px;
+  .stage-pill.done { color: var(--ok); border-color: var(--ok); }
+  .stage-pill.done .dot { background: var(--ok); }
+
+  .stage-pill.error { color: var(--risk-high); border-color: var(--risk-high); }
+  .stage-pill.error .dot { background: var(--risk-high); }
+
+  /* ---- Stat cards ---- */
+  .stat-cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+
+  .stat-card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--text-faint);
+    border-radius: 4px;
+    padding: 12px 14px;
   }
-  .result-summary strong { color: var(--text); }
+  .stat-card .num { font-family: "IBM Plex Mono", monospace; font-size: 22px; font-weight: 600; }
+  .stat-card .lbl { font-size: 11px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.05em; margin-top: 2px; }
+
+  .stat-card.high { border-left-color: var(--risk-high); }
+  .stat-card.high .num { color: var(--risk-high); }
+  .stat-card.medium { border-left-color: var(--risk-medium); }
+  .stat-card.medium .num { color: var(--risk-medium); }
+  .stat-card.low { border-left-color: var(--risk-low); }
+  .stat-card.low .num { color: var(--risk-low); }
+  .stat-card.total { border-left-color: var(--accent); }
+  .stat-card.total .num { color: var(--accent); }
 
   .download-list { display: flex; flex-direction: column; gap: 8px; }
 
@@ -308,6 +331,120 @@
     display: none;
   }
   .error-box.visible { display: block; }
+
+  /* ---- Scanner summary ---- */
+  .scanner-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+  .scanner-card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 12px 14px;
+  }
+  .scanner-card .scanner-name { font-size: 12px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.05em; }
+  .scanner-card .scanner-count { font-family: "IBM Plex Mono", monospace; font-size: 20px; font-weight: 600; margin-top: 4px; }
+  .scanner-card .scanner-breakdown { font-size: 11px; color: var(--text-faint); margin-top: 6px; }
+  .scanner-card .scanner-state {
+    display: inline-block; margin-top: 8px; font-size: 10.5px; padding: 2px 8px;
+    border-radius: 10px; border: 1px solid var(--border); color: var(--text-faint);
+  }
+  .scanner-card .scanner-state.done { color: var(--ok); border-color: var(--ok); }
+  .scanner-card .scanner-state.skipped { color: var(--text-faint); opacity: 0.7; }
+
+  /* ---- Tabs ---- */
+  .tab-bar { display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin-bottom: 16px; }
+  .tab-btn {
+    background: none; border: none; color: var(--text-dim); font-family: inherit; font-size: 13px;
+    padding: 9px 16px; cursor: pointer; border-bottom: 2px solid transparent;
+  }
+  .tab-btn:hover { color: var(--text); }
+  .tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
+  .tab-panel[hidden] { display: none; }
+
+  /* ---- Findings ---- */
+  .finding-group { margin-bottom: 18px; }
+  .finding-group .group-target {
+    font-family: "IBM Plex Mono", monospace; font-size: 12.5px; color: var(--text-dim);
+    margin-bottom: 8px; padding-bottom: 6px; border-bottom: 1px solid var(--border);
+  }
+  .finding-row {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 4px;
+    padding: 10px 14px; margin-bottom: 6px;
+  }
+  .finding-row summary {
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    cursor: pointer; list-style: none;
+  }
+  .finding-row summary::-webkit-details-marker { display: none; }
+  .finding-row .finding-title { font-size: 13px; flex: 1; }
+  .finding-row .finding-badges { display: flex; gap: 6px; flex-shrink: 0; }
+  .finding-row .finding-detail {
+    margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border);
+    font-size: 12.5px; color: var(--text-dim);
+  }
+  .finding-row .finding-detail .evidence-line { font-family: "IBM Plex Mono", monospace; font-size: 12px; color: var(--text-faint); margin-top: 4px; }
+
+  .badge {
+    font-size: 10.5px; padding: 2px 8px; border-radius: 10px; font-family: "IBM Plex Mono", monospace;
+    border: 1px solid var(--border); white-space: nowrap;
+  }
+  .badge.risk-high { color: var(--risk-high); border-color: var(--risk-high); }
+  .badge.risk-medium { color: var(--risk-medium); border-color: var(--risk-medium); }
+  .badge.risk-low { color: var(--risk-low); border-color: var(--risk-low); }
+  .badge.risk-info { color: var(--text-faint); }
+
+  .badge.status-matched { color: var(--risk-high); border-color: var(--risk-high); }
+  .badge.status-needs_review { color: var(--risk-medium); border-color: var(--risk-medium); }
+  .badge.status-no_match { color: var(--ok); border-color: var(--ok); }
+
+  /* ---- Compliance ---- */
+  .compliance-section { margin-bottom: 24px; }
+  .compliance-section > h3 {
+    font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-dim);
+    margin: 0 0 10px 0;
+  }
+  .compliance-note { font-size: 12px; color: var(--text-faint); margin-bottom: 12px; line-height: 1.6; }
+
+  .fail-card {
+    background: var(--panel); border: 1px solid var(--risk-high); border-left: 3px solid var(--risk-high);
+    border-radius: 4px; padding: 14px 16px; margin-bottom: 10px;
+  }
+  .fail-card .fail-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
+  .fail-card .fail-title { font-size: 14px; font-weight: 600; }
+  .fail-card .fail-target { font-family: "IBM Plex Mono", monospace; font-size: 11.5px; color: var(--text-faint); margin-bottom: 10px; }
+  .fail-card .fail-block { margin-top: 8px; }
+  .fail-card .fail-block .fail-label { font-size: 11px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 3px; }
+  .fail-card .fail-block .fail-value { font-size: 13px; }
+  .fail-card .evidence-box {
+    background: #0B1424; border: 1px solid var(--border); border-radius: 3px; padding: 8px 10px;
+    font-family: "IBM Plex Mono", monospace; font-size: 12px; color: #C3D2EF; margin-top: 3px;
+  }
+
+  .review-card {
+    background: var(--panel); border: 1px solid var(--border); border-left: 3px solid var(--risk-medium);
+    border-radius: 4px; padding: 12px 16px; margin-bottom: 8px;
+  }
+  .review-card summary { cursor: pointer; display: flex; align-items: center; justify-content: space-between; list-style: none; }
+  .review-card summary::-webkit-details-marker { display: none; }
+  .review-card .review-title { font-size: 13.5px; }
+  .review-card .review-body { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); font-size: 12.5px; }
+  .review-card .candidate-group { margin-bottom: 8px; }
+  .review-card .candidate-group .cg-label { font-size: 11px; color: var(--text-dim); text-transform: uppercase; margin-bottom: 4px; }
+  .review-card .candidate-item { color: var(--text-dim); margin-bottom: 2px; }
+  .review-card .candidate-item .cid { color: var(--accent); font-family: "IBM Plex Mono", monospace; }
+  .review-card .llm-advice { margin-top: 10px; padding: 10px 12px; background: #0B1424; border-radius: 3px; border: 1px solid var(--border); }
+  .review-card .llm-advice .llm-label { font-size: 11px; color: var(--text-faint); margin-bottom: 4px; }
+
+  .process-list { display: flex; flex-direction: column; gap: 6px; }
+  .process-item {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 3px;
+    padding: 8px 12px; font-size: 12.5px; color: var(--text-dim);
+  }
+  .process-item .cid { color: var(--accent); font-family: "IBM Plex Mono", monospace; }
+
+  .empty-note { color: var(--text-faint); font-size: 12.5px; padding: 8px 0; }
+
+  .results { display: none; }
+  .results.visible { display: block; }
 </style>
 </head>
 <body>
@@ -450,7 +587,7 @@
           <input type="checkbox" id="make_report" name="make_report" checked>
           <div class="label-block"><div class="title">產生 Markdown 報告</div></div>
         </div>
-        <div class="hint">產生報告時會自動一併輸出 PDF 版本。</div>
+        <div class="hint">產生報告時會自動一併輸出 PDF 版本。法規 Mapping（Findings/Compliance 頁面）不受此開關影響，掃描完成後一律執行。</div>
         <div class="field">
           <label for="operator">操作者</label>
           <input type="text" id="operator" name="operator" placeholder="你的名字">
@@ -474,15 +611,39 @@
 
   <div class="col">
     <div class="panel">
-      <h2>即時輸出</h2>
-      <div class="log-panel" id="log-panel"><span class="placeholder">尚未執行掃描。設定好左側參數後按「執行掃描」。</span></div>
+      <h2>Scan Progress</h2>
+      <div class="stage-list" id="stage-list"></div>
+      <div class="error-box" id="error-box"></div>
     </div>
 
     <div class="panel results" id="results-panel">
-      <h2>結果</h2>
-      <div class="result-summary" id="result-summary"></div>
+      <h2>結果統計</h2>
+      <div class="stat-cards" id="stat-cards"></div>
+    </div>
+
+    <div class="panel results" id="downloads-panel">
+      <h2>下載</h2>
       <div class="download-list" id="download-list"></div>
-      <div class="error-box" id="error-box"></div>
+    </div>
+
+    <div class="panel results" id="scanner-summary-panel">
+      <h2>Scanner 結果摘要</h2>
+      <div class="scanner-grid" id="scanner-grid"></div>
+    </div>
+
+    <div class="panel results" id="detail-panel">
+      <div class="tab-bar">
+        <button type="button" class="tab-btn active" id="tab-btn-findings" data-tab="findings">Findings</button>
+        <button type="button" class="tab-btn" id="tab-btn-compliance" data-tab="compliance">Compliance</button>
+      </div>
+
+      <div class="tab-panel" id="tab-findings">
+        <div id="findings-content"></div>
+      </div>
+
+      <div class="tab-panel" id="tab-compliance" hidden>
+        <div id="compliance-content"></div>
+      </div>
     </div>
   </div>
 </main>
@@ -490,7 +651,31 @@
 <script>
 const API = "";
 let pollTimer = null;
-let renderedLogCount = 0;
+
+const STAGE_STATUS_LABEL = {
+  pending: "等待中",
+  running: "進行中",
+  done: "完成",
+  skipped: "不執行",
+  error: "失敗",
+};
+
+const RISK_LABEL = { high: "HIGH", medium: "MEDIUM", low: "LOW", info: "INFO" };
+const STATUS_LABEL = { matched: "不符合", needs_review: "待複核", no_match: "未觸發規則" };
+
+const SOURCE_LABEL = { nmap: "Nmap（網路）", binwalk: "Binwalk（韌體）", zap: "ZAP（Web）" };
+const STAGE_TO_SOURCE = { nmap: "nmap", firmware: "binwalk", zap: "zap" };
+
+function escapeHtml(s) {
+  return String(s ?? "").replace(/[&<>"']/g, c => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+  }[c]));
+}
+
+function basename(path) {
+  if (!path) return "";
+  return String(path).split(/[\\/]/).pop();
+}
 
 async function loadOptions() {
   const res = await fetch(`${API}/api/options`);
@@ -522,68 +707,299 @@ document.querySelectorAll(".tool-toggle").forEach(btn => {
   });
 });
 
+document.querySelectorAll(".tab-btn").forEach(btn => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll(".tab-btn").forEach(b => b.classList.remove("active"));
+    document.querySelectorAll(".tab-panel").forEach(p => p.hidden = true);
+    btn.classList.add("active");
+    document.getElementById(`tab-${btn.dataset.tab}`).hidden = false;
+  });
+});
+
 function setStatus(state, text) {
   const pill = document.getElementById("status-pill");
   pill.className = "status-pill" + (state ? " " + state : "");
   document.getElementById("status-text").textContent = text;
 }
 
-function renderLog(lines, running) {
-  const panel = document.getElementById("log-panel");
-  const wasAtBottom = panel.scrollTop + panel.clientHeight >= panel.scrollHeight - 10;
+// ---- Scan progress ----
 
-  if (renderedLogCount === 0) panel.innerHTML = "";
-  for (let i = renderedLogCount; i < lines.length; i++) {
-    const div = document.createElement("div");
-    div.className = "log-line";
-    div.textContent = lines[i];
-    panel.appendChild(div);
-  }
-  renderedLogCount = lines.length;
-
-  const oldCursor = panel.querySelector(".cursor");
-  if (oldCursor) oldCursor.remove();
-  if (running) {
-    const cursor = document.createElement("span");
-    cursor.className = "cursor";
-    panel.appendChild(cursor);
-  }
-
-  if (wasAtBottom) panel.scrollTop = panel.scrollHeight;
-}
-
-function renderResults(result, error) {
-  const panel = document.getElementById("results-panel");
-  panel.classList.add("visible");
-
-  const errorBox = document.getElementById("error-box");
-  if (error) {
-    errorBox.textContent = error;
-    errorBox.classList.add("visible");
-    document.getElementById("result-summary").textContent = "";
-    document.getElementById("download-list").innerHTML = "";
+function renderStages(stages) {
+  const list = document.getElementById("stage-list");
+  list.innerHTML = "";
+  if (!stages) {
+    list.innerHTML = `<div class="empty-note">尚未執行掃描。設定好左側參數後按「執行掃描」。</div>`;
     return;
   }
-  errorBox.classList.remove("visible");
+  Object.values(stages).forEach(stage => {
+    const row = document.createElement("div");
+    row.className = "stage-row";
+    row.innerHTML = `
+      <span class="stage-name">${escapeHtml(stage.label)}</span>
+      <span class="stage-pill ${stage.status}"><span class="dot"></span>${STAGE_STATUS_LABEL[stage.status] || stage.status}</span>
+    `;
+    list.appendChild(row);
+  });
+}
 
-  document.getElementById("result-summary").innerHTML =
-    `找到 <strong>${result.findings_count}</strong> 筆項目 &middot; 輸出資料夾 <span class="mono">${result.run_dir}</span>`;
+// ---- Stat cards ----
 
+function renderStatCards(findings) {
+  const counts = { high: 0, medium: 0, low: 0 };
+  findings.forEach(f => {
+    if (f.status === "matched" && counts.hasOwnProperty(f.risk_level)) counts[f.risk_level]++;
+  });
+  const el = document.getElementById("stat-cards");
+  el.innerHTML = `
+    <div class="stat-card high"><div class="num">${counts.high}</div><div class="lbl">High</div></div>
+    <div class="stat-card medium"><div class="num">${counts.medium}</div><div class="lbl">Medium</div></div>
+    <div class="stat-card low"><div class="num">${counts.low}</div><div class="lbl">Low</div></div>
+    <div class="stat-card total"><div class="num">${findings.length}</div><div class="lbl">Total Findings</div></div>
+  `;
+}
+
+// ---- Downloads ----
+
+function renderDownloads(result) {
   const files = [];
-  if (result.combined_json) files.push(["combined.json", result.combined_json]);
-  if (result.report_path) files.push(["report.md", result.report_path]);
-  if (result.pdf_path) files.push(["report.pdf", result.pdf_path]);
+  if (result.combined_json) files.push(["combined.json", basename(result.combined_json)]);
+  if (result.report_path) files.push(["report.md", basename(result.report_path)]);
+  if (result.pdf_path) files.push(["report.pdf", basename(result.pdf_path)]);
 
   const list = document.getElementById("download-list");
   list.innerHTML = "";
-  files.forEach(([label, path]) => {
-    const filename = path.split("/").pop();
+  if (files.length === 0) {
+    list.innerHTML = `<div class="empty-note">本次沒有勾選產生報告，僅有掃描結果可在下方查看。</div>`;
+    return;
+  }
+  files.forEach(([label, filename]) => {
     const item = document.createElement("div");
     item.className = "download-item";
-    item.innerHTML = `<span class="name">${label}</span><a href="${API}/api/download/${encodeURIComponent(filename)}" download>下載</a>`;
+    item.innerHTML = `<span class="name">${escapeHtml(label)}</span><a href="${API}/api/download/${encodeURIComponent(filename)}" download>下載</a>`;
     list.appendChild(item);
   });
 }
+
+// ---- Scanner summary ----
+
+function renderScannerSummary(findings, stages) {
+  const grid = document.getElementById("scanner-grid");
+  grid.innerHTML = "";
+
+  Object.entries(STAGE_TO_SOURCE).forEach(([stageKey, source]) => {
+    const stageInfo = stages ? stages[stageKey] : null;
+    const executed = stageInfo && stageInfo.status !== "skipped";
+    const items = findings.filter(f => f.source === source);
+
+    const breakdown = { high: 0, medium: 0, low: 0, needs_review: 0 };
+    items.forEach(f => {
+      if (f.status === "matched" && breakdown.hasOwnProperty(f.risk_level)) breakdown[f.risk_level]++;
+      if (f.status === "needs_review") breakdown.needs_review++;
+    });
+
+    const card = document.createElement("div");
+    card.className = "scanner-card";
+    const stateClass = !stageInfo ? "" : (stageInfo.status === "skipped" ? "skipped" : stageInfo.status);
+    const stateLabel = stageInfo ? (STAGE_STATUS_LABEL[stageInfo.status] || stageInfo.status) : "不執行";
+    card.innerHTML = `
+      <div class="scanner-name">${SOURCE_LABEL[source]}</div>
+      <div class="scanner-count">${executed ? items.length : "—"}</div>
+      <div class="scanner-breakdown">${executed
+        ? `High ${breakdown.high} · Medium ${breakdown.medium} · Low ${breakdown.low} · 待複核 ${breakdown.needs_review}`
+        : "本次未執行此掃描"}</div>
+      <span class="scanner-state ${stateClass}">${stateLabel}</span>
+    `;
+    grid.appendChild(card);
+  });
+}
+
+// ---- Findings tab ----
+
+function riskBadge(risk) {
+  return `<span class="badge risk-${risk}">${RISK_LABEL[risk] || risk}</span>`;
+}
+function statusBadge(status) {
+  return `<span class="badge status-${status}">${STATUS_LABEL[status] || status}</span>`;
+}
+
+function detailLine(detail) {
+  const entries = Object.entries(detail || {});
+  if (entries.length === 0) return "（無額外欄位）";
+  return entries.map(([k, v]) => `${k}: ${v}`).join("  ·  ");
+}
+
+function renderFindings(findings) {
+  const container = document.getElementById("findings-content");
+  container.innerHTML = "";
+
+  if (findings.length === 0) {
+    container.innerHTML = `<div class="empty-note">本次掃描沒有發現任何項目。</div>`;
+    return;
+  }
+
+  const groups = new Map();
+  findings.forEach(f => {
+    if (!groups.has(f.target)) groups.set(f.target, []);
+    groups.get(f.target).push(f);
+  });
+
+  groups.forEach((items, target) => {
+    const groupEl = document.createElement("div");
+    groupEl.className = "finding-group";
+    groupEl.innerHTML = `<div class="group-target">${escapeHtml(target)}</div>`;
+
+    items.forEach(f => {
+      const row = document.createElement("details");
+      row.className = "finding-row";
+      row.innerHTML = `
+        <summary>
+          <span class="finding-title">${escapeHtml(f.title)}</span>
+          <span class="finding-badges">${riskBadge(f.risk_level)}${statusBadge(f.status)}</span>
+        </summary>
+        <div class="finding-detail">
+          <div>來源：${escapeHtml(SOURCE_LABEL[f.source] || f.source)}</div>
+          <div class="evidence-line">${escapeHtml(detailLine(f.detail))}</div>
+          ${f.recommendation ? `<div style="margin-top:6px;">建議：${escapeHtml(f.recommendation)}</div>` : ""}
+        </div>
+      `;
+      groupEl.appendChild(row);
+    });
+
+    container.appendChild(groupEl);
+  });
+}
+
+// ---- Compliance tab ----
+
+function renderCandidateGroup(label, items, idField, titleField) {
+  if (!items || items.length === 0) return "";
+  const lines = items.map(c => {
+    const id = c[idField] || "";
+    const title = titleField ? (c[titleField] || "") : "";
+    const score = typeof c.score === "number" ? `（分數 ${c.score.toFixed(2)}）` : "";
+    return `<div class="candidate-item"><span class="cid">${escapeHtml(id)}</span> ${escapeHtml(title)}${score}</div>`;
+  }).join("");
+  return `<div class="candidate-group"><div class="cg-label">${escapeHtml(label)}</div>${lines}</div>`;
+}
+
+function renderCompliance(findings, processRequirements) {
+  const container = document.getElementById("compliance-content");
+  container.innerHTML = "";
+
+  const failItems = findings.filter(f => f.status === "matched");
+  const reviewItems = findings.filter(f => f.status === "needs_review");
+
+  const failSection = document.createElement("div");
+  failSection.className = "compliance-section";
+  failSection.innerHTML = `<h3>不符合項目（Fail）</h3>`;
+  if (failItems.length === 0) {
+    failSection.innerHTML += `<div class="empty-note">本次掃描沒有比對到已知規則判定為不符合的項目。</div>`;
+  } else {
+    failItems.forEach(f => {
+      const card = document.createElement("div");
+      card.className = "fail-card";
+      card.innerHTML = `
+        <div class="fail-head">
+          <span class="fail-title">${escapeHtml(f.title)}</span>
+          ${riskBadge(f.risk_level)}
+        </div>
+        <div class="fail-target">目標：${escapeHtml(f.target)} ・ 來源：${escapeHtml(SOURCE_LABEL[f.source] || f.source)}</div>
+        <div class="fail-block">
+          <div class="fail-label">對應法規</div>
+          <div class="fail-value">${escapeHtml(f.cra_reference || "（無）")}</div>
+        </div>
+        <div class="fail-block">
+          <div class="fail-label">理由</div>
+          <div class="fail-value">${escapeHtml(f.recommendation || "（無）")}</div>
+        </div>
+        <div class="fail-block">
+          <div class="fail-label">證據</div>
+          <div class="evidence-box">${escapeHtml(detailLine(f.detail))}</div>
+        </div>
+      `;
+      failSection.appendChild(card);
+    });
+  }
+  container.appendChild(failSection);
+
+  const reviewSection = document.createElement("div");
+  reviewSection.className = "compliance-section";
+  reviewSection.innerHTML = `<h3>待複核項目（Needs Review）</h3>
+    <div class="compliance-note">以下項目沒有對應到既有規則，系統無法自動判定是否違反規範，僅附上語意檢索找到的候選分類/條文供參考，須由人工逐項確認，不能直接引用為正式判讀結果。</div>`;
+  if (reviewItems.length === 0) {
+    reviewSection.innerHTML += `<div class="empty-note">本次掃描沒有待複核的項目。</div>`;
+  } else {
+    reviewItems.forEach(f => {
+      const s = f.rag_suggestions || {};
+      const card = document.createElement("details");
+      card.className = "review-card";
+      const candidatesHtml = [
+        renderCandidateGroup("CWE 候選", s.cwe, "cwe_id", "name"),
+        renderCandidateGroup("IEC 62443-4-2 候選", s.iec, "article_no", "title"),
+        renderCandidateGroup("CRA 候選", s.cra, "article_no", "title"),
+      ].join("") || `<div class="empty-note">語意檢索目前沒有回傳候選（可能是知識庫尚未建立或連線失敗）。</div>`;
+
+      const llmHtml = f.llm_advice ? `
+        <div class="llm-advice">
+          <div class="llm-label">AI 研判建議（模型：${escapeHtml(f.llm_advice.model || "")}，僅供參考）</div>
+          <div>${escapeHtml(f.llm_advice.answer || "")}</div>
+        </div>` : "";
+
+      card.innerHTML = `
+        <summary>
+          <span class="review-title">${escapeHtml(f.title)}（${escapeHtml(f.target)}）</span>
+          ${statusBadge(f.status)}
+        </summary>
+        <div class="review-body">
+          ${candidatesHtml}
+          ${llmHtml}
+        </div>
+      `;
+      reviewSection.appendChild(card);
+    });
+  }
+  container.appendChild(reviewSection);
+
+  if (processRequirements && processRequirements.candidates && processRequirements.candidates.length > 0) {
+    const procSection = document.createElement("div");
+    procSection.className = "compliance-section";
+    procSection.innerHTML = `<h3>開發流程面對照（IEC 62443-4-1）</h3>
+      <div class="compliance-note">掃描工具無法測量開發流程，以下清單不能證明或否證任何一條要求，僅依整場掃描的輪廓檢索出語意上較接近的條目，作為自評的起點，非完整清單。</div>`;
+    const list = document.createElement("div");
+    list.className = "process-list";
+    processRequirements.candidates.forEach(c => {
+      const item = document.createElement("div");
+      item.className = "process-item";
+      item.innerHTML = `<span class="cid">${escapeHtml(c.article_no)}</span> ${escapeHtml(c.title)}${c.group ? `｜${escapeHtml(c.group)}` : ""}`;
+      list.appendChild(item);
+    });
+    procSection.appendChild(list);
+    container.appendChild(procSection);
+  }
+}
+
+// ---- Result orchestration ----
+
+function renderResults(result) {
+  ["results-panel", "downloads-panel", "scanner-summary-panel", "detail-panel"].forEach(id => {
+    document.getElementById(id).classList.add("visible");
+  });
+
+  const findings = result.merged_findings || [];
+  renderStatCards(findings);
+  renderDownloads(result);
+  renderScannerSummary(findings, currentStages);
+  renderFindings(findings);
+  renderCompliance(findings, result.process_requirements);
+}
+
+function hideResults() {
+  ["results-panel", "downloads-panel", "scanner-summary-panel", "detail-panel"].forEach(id => {
+    document.getElementById(id).classList.remove("visible");
+  });
+}
+
+let currentStages = null;
 
 async function poll() {
   try {
@@ -591,18 +1007,23 @@ async function poll() {
     if (!res.ok) return;
     const job = await res.json();
 
-    renderLog(job.log, job.status === "running");
+    currentStages = job.stages;
+    renderStages(job.stages);
 
     if (job.status === "running") {
       setStatus("running", "掃描中");
     } else if (job.status === "done") {
       setStatus("done", "完成");
-      renderResults(job.result, null);
+      document.getElementById("error-box").classList.remove("visible");
+      renderResults(job.result);
       stopPolling();
       document.getElementById("run-btn").disabled = false;
     } else if (job.status === "error") {
       setStatus("error", "失敗");
-      renderResults(null, job.error);
+      const errorBox = document.getElementById("error-box");
+      errorBox.textContent = job.error;
+      errorBox.classList.add("visible");
+      hideResults();
       stopPolling();
       document.getElementById("run-btn").disabled = false;
     }
@@ -621,8 +1042,8 @@ document.getElementById("scan-form").addEventListener("submit", async (e) => {
   const btn = document.getElementById("run-btn");
   btn.disabled = true;
   setStatus("running", "送出中");
-  renderedLogCount = 0;
-  document.getElementById("results-panel").classList.remove("visible");
+  document.getElementById("error-box").classList.remove("visible");
+  hideResults();
 
   const formData = new FormData(e.target);
   // checkbox 沒勾選時 FormData 不會帶這個欄位，後端會用 Form 預設值，
@@ -634,7 +1055,9 @@ document.getElementById("scan-form").addEventListener("submit", async (e) => {
     if (!res.ok) {
       const err = await res.json();
       setStatus("error", "無法啟動");
-      renderResults(null, err.detail || "掃描無法啟動");
+      const errorBox = document.getElementById("error-box");
+      errorBox.textContent = err.detail || "掃描無法啟動";
+      errorBox.classList.add("visible");
       btn.disabled = false;
       return;
     }
@@ -642,13 +1065,16 @@ document.getElementById("scan-form").addEventListener("submit", async (e) => {
     poll();
   } catch (err) {
     setStatus("error", "無法連線");
-    renderResults(null, String(err));
+    const errorBox = document.getElementById("error-box");
+    errorBox.textContent = String(err);
+    errorBox.classList.add("visible");
     btn.disabled = false;
   }
 });
 
+renderStages(null);
 loadOptions();
 </script>
 
 </body>
-</html> 
+</html>

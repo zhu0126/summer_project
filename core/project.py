@@ -23,13 +23,21 @@ import sys
 
 from datetime import datetime
 from pathlib import Path
+from typing import Callable
 
 from core.common import save_findings_json, print_findings, set_output_dir, get_output_dir
+from core.analysis import analyze_findings, scan_level_process_requirements
 
 from scanners import nmap_scan
 from scanners import firmware_scan
 from scanners import zap_scan
 from core import report
+
+# progress_cb(stage, status) 的 stage/status 字串常數，Web 後端跟 CLI
+# 共用同一份，避免兩邊各自寫一套字串字面值兜不起來。
+# stage：nmap / firmware / zap / analysis / report
+# status：running / done / skipped / error
+ProgressCallback = Callable[[str, str], None]
 
 try:
     # md_to_pdf 是子資料夾（package）的情況
@@ -120,6 +128,7 @@ def run_pipeline(
     org: str = "",
     title: str | None = None,
     output_root: Path | None = None,
+    progress_cb: ProgressCallback | None = None,
 ) -> dict:
     """
     核心 pipeline：串接三個掃描模組 + 報告 + PDF，回傳結構化結果。
@@ -140,6 +149,10 @@ def run_pipeline(
     if not (ip or firmware or url):
         raise ValueError("至少要提供 ip、firmware、url 其中一個目標")
 
+    def _report(stage: str, status: str) -> None:
+        if progress_cb is not None:
+            progress_cb(stage, status)
+
     # 在任何模組開始寫檔之前，先建立本次執行專屬的資料夾，並切換
     # common.get_output_dir()，讓 nmap_scan/firmware_scan/zap_scan/report
     # 這些模組接下來呼叫 get_output_dir() 拿到的都是這個新路徑——
@@ -153,6 +166,7 @@ def run_pipeline(
 
     all_findings: list[dict] = []
 
+    _report("nmap", "running" if ip else "skipped")
     if ip:
         print("==== [1/3] Network scan (nmap) ====")
         all_findings += run_network_scan(
@@ -162,18 +176,23 @@ def run_pipeline(
             script_category=script_category,
         )
         print()
+        _report("nmap", "done")
 
+    _report("firmware", "running" if firmware else "skipped")
     if firmware:
         print("==== [2/3] Firmware scan (binwalk) ====")
         all_findings += run_firmware_scan(
             firmware, extract=extract, matryoshka=matryoshka, run_as_root=run_as_root,
         )
         print()
+        _report("firmware", "done")
 
+    _report("zap", "running" if url else "skipped")
     if url:
         print("==== [3/3] Web app scan (ZAP) ====")
         all_findings += run_webapp_scan(url, zap_api_url, active_scan, zap_auto_start)
         print()
+        _report("zap", "done")
 
     combined_json = save_findings_json(all_findings, f"combined_{run_ts}")
 
@@ -181,20 +200,35 @@ def run_pipeline(
     print(f"Combined JSON saved to: {combined_json}")
     print_findings(all_findings, empty_message="No findings from any module.")
 
+    # 法規 Mapping（規則比對 + RAG 語意檢索）獨立於「要不要產生 Markdown
+    # 報告」之外執行：Web 前端的 Findings/Compliance 頁面要呈現這份結果，
+    # 不該綁在 make_report 這個只影響檔案產出的開關上。
+    _report("analysis", "running" if all_findings else "skipped")
+    merged_findings: list[dict] = []
+    process_requirements = None
+    if all_findings:
+        analysis_results = analyze_findings(all_findings, use_llm=use_llm)
+        merged_findings = report.merge_findings_and_analysis(all_findings, analysis_results)
+        process_requirements = scan_level_process_requirements(all_findings)
+        _report("analysis", "done")
+
     result = {
         "run_dir": str(run_dir),
         "run_ts": run_ts,
         "combined_json": combined_json,
         "findings_count": len(all_findings),
+        "merged_findings": merged_findings,
+        "process_requirements": process_requirements,
         "report_path": None,
         "pdf_path": None,
     }
 
+    _report("report", "running" if make_report else "skipped")
     if make_report:
         scan_metadata = report.build_scan_metadata(
             operator=operator, ip=ip or "", firmware=firmware or "", url=url or "",
         )
-        content = report.render_report(all_findings, scan_metadata, use_llm=use_llm)
+        content = report.render_report_from_merged(merged_findings, process_requirements, scan_metadata)
         # 沿用跟 combined json 相同的時間戳記，方便從報告回溯到是哪次
         # orchestrator 執行產生的（跟 combined_{run_ts}.json 對應）
         report_path = report.save_report(content, f"report_{run_ts}")
@@ -218,6 +252,8 @@ def run_pipeline(
                 result["pdf_path"] = pdf_path
             except Exception as e:
                 print(f"[pdf] Error: PDF 轉換失敗（{e}），Markdown 報告仍可正常使用。")
+
+        _report("report", "done")
 
     return result
 
