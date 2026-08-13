@@ -237,6 +237,53 @@ def translate_cra_article(article_no: str, title: str, text: str) -> str | None:
     return result
 
 
+PENTEST_OBJECTIVE_SYSTEM_INSTRUCTION = """You are helping plan an AUTHORIZED penetration test of an IoT product, on targets the operator is explicitly permitted to test. You are given one scan finding and, optionally, a security requirement (from IEC 62443-4-2 or the EU CRA) that the finding may relate to.
+
+Your job: produce ONE concrete, testable objective — what a penetration tester, or an autonomous pentest agent such as PentestGPT, should attempt or verify against the LIVE target in order to determine whether the requirement is actually satisfied.
+
+Rules:
+1. Output a test OBJECTIVE, not a restatement of the requirement and not a specific exploit payload or command. Describe what to verify or attempt (for example: confirm whether the Telnet service on port 23 allows access without authentication and whether default or weak credentials are accepted), and leave the exact commands for the pentest tool to decide.
+2. Ground the objective in the given finding — its service, port, and target — and, when a requirement is provided, tie the objective to what that requirement demands.
+3. Keep it to one or two sentences, written in Traditional Chinese (zh-TW).
+4. Do not invent services, ports, or findings that are not given. Do not output multiple objectives, a numbered list, or any headings.
+5. Output plain text only — no markdown, no labels, no preamble."""
+
+
+def derive_test_objective(finding: dict, requirement: dict | None) -> str | None:
+    """
+    把一筆 finding（可選地加上它對應到的法規要求）交給 Gemini，推導出
+    一句「該對這個活目標驗證/嘗試什麼」的測試目標，作為 PentestGPT 的
+    --instruction 注入點。
+
+    為什麼需要這一步：法規知識庫存的是「要求」（元件該具備什麼能力），
+    不是「測試步驟」。這個函式做的是 requirement → 可測試目標 的轉換，
+    真正的滲透手法（how）交給 PentestGPT 自己決定，不在這裡也不在法規裡。
+
+    回傳 None 代表 LLM 這條路徑不可用（沒金鑰/沒套件/呼叫失敗），呼叫端
+    應退回用 finding 本身資訊組出的通用目標，不能因此讓整份測試計畫產不出來。
+    """
+    detail = finding.get("detail") or {}
+    detail_lines = "\n".join(
+        f"- {k}: {v}" for k, v in detail.items() if v not in (None, "", [], {})
+    )
+    requirement_block = ""
+    if requirement and (requirement.get("id") or requirement.get("text")):
+        requirement_block = (
+            f"\n\n# Related requirement (the objective should test whether this holds)\n"
+            f"- {requirement.get('id', '')}: {requirement.get('text', '')}"
+        )
+
+    prompt = f"""# Scan Finding
+
+- Title: {finding.get('title', '')}
+- Category: {finding.get('category', '')} (source tool: {finding.get('source', '')})
+- Target: {finding.get('target', '')}
+{detail_lines}{requirement_block}
+"""
+    answer = ask_gemini(PENTEST_OBJECTIVE_SYSTEM_INSTRUCTION, prompt)
+    return answer.strip() if answer else None
+
+
 def build_prompt(finding: dict, context: str) -> str:
     """
     組 user prompt：finding 摘要 + 參考資料。
