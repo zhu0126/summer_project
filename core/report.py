@@ -85,6 +85,30 @@ def group_by_target(merged_findings: list[dict]) -> list[dict]:
     return [{"target": target, "findings": items} for target, items in groups.items()]
 
 
+# 信心分數轉標籤的門檻，跟 webapp/frontend/index.html 的 confidenceLabel()
+# 必須維持一致——兩邊各自實作（一個是 Jinja filter 給 Markdown 報告用，
+# 一個是 JS 給網頁用），沒有共用模組可以 import，改動時兩邊要一起改。
+CONFIDENCE_HIGH_THRESHOLD = 0.80
+CONFIDENCE_MEDIUM_THRESHOLD = 0.60
+
+
+def confidence_label(score: float | None) -> str | None:
+    """
+    把 0~1 的向量相似度分數轉成「高/中/低」標籤。不直接把數字分數
+    印給人看，是因為分析層已經證明這個分數無法用單一門檻區分「真的
+    相關」跟「純粹雜訊」（見 analysis.py 開頭的說明）——與其暗示一個
+    使用者會誤以為有精確意義的小數點數字，不如給一個粗略的三段標籤，
+    誠實反映這個分數只能拿來做粗略排序，不是可信賴的機率值。
+    """
+    if score is None:
+        return None
+    if score >= CONFIDENCE_HIGH_THRESHOLD:
+        return "高"
+    if score >= CONFIDENCE_MEDIUM_THRESHOLD:
+        return "中"
+    return "低"
+
+
 def render_report_from_merged(
     merged_findings: list[dict], process_requirements: dict | None, scan_metadata: dict
 ) -> str:
@@ -105,6 +129,7 @@ def render_report_from_merged(
         trim_blocks=True,
         lstrip_blocks=True,
     )
+    env.filters["confidence_label"] = confidence_label
     template = env.get_template(TEMPLATE_NAME)
 
     return template.render(

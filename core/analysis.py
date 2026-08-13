@@ -72,8 +72,10 @@ except ImportError:
 
 try:
     from core.llm_advisor import advise_finding as llm_advise_finding
+    from core.llm_advisor import translate_cra_article
 except ImportError:
     llm_advise_finding = None
+    translate_cra_article = None
     print("[analysis] 警告：llm_advisor 無法匯入，LLM 研判建議停用")
 
 # 每個知識庫各給幾筆候選——不做信心分數過濾（實測證明單一門檻無法
@@ -128,14 +130,39 @@ def _cwe_candidates(finding: dict) -> list[dict]:
 
 
 def _cra_candidates(finding: dict) -> list[dict]:
-    """跟 _cwe_candidates 邏輯一致，查詢對象是 CRA collection。"""
+    """
+    跟 _cwe_candidates 邏輯一致，查詢對象是 CRA collection。額外幫每筆
+    候選附上 text_zh——CRA 條文的 title 常常只是像 "Reporting obligations"
+    這種標題本身看不出具體要做什麼，改附一段用 Gemini 把條文全文轉成
+    可執行中文說明的版本，呈現層（webapp/report）改成優先顯示這欄。
+    """
     if retrieve_cra_hybrid is None:
         return []
     try:
-        return retrieve_cra_hybrid(_build_rag_query(finding), top_k=RAG_SUGGESTION_TOP_K)
+        candidates = retrieve_cra_hybrid(_build_rag_query(finding), top_k=RAG_SUGGESTION_TOP_K)
     except Exception as e:
         print(f"[analysis] CRA 候選查詢失敗，略過（{e}）")
         return []
+
+    return [_with_cra_translation(c) for c in candidates]
+
+
+def _with_cra_translation(candidate: dict) -> dict:
+    """
+    附上 text_zh；找不到 LLM 路徑或呼叫失敗都回傳 text_zh=None，讓呈現層
+    自己退回顯示 text（英文原文）——不能因為翻譯這條選用路徑失敗，就讓
+    整筆候選消失或擋住其他候選的顯示。
+    """
+    if translate_cra_article is None:
+        return {**candidate, "text_zh": None}
+    try:
+        text_zh = translate_cra_article(
+            candidate.get("article_no", ""), candidate.get("title", ""), candidate.get("text", "")
+        )
+    except Exception as e:
+        print(f"[analysis] CRA 條文中譯失敗，略過（{e}）")
+        text_zh = None
+    return {**candidate, "text_zh": text_zh}
 
 
 def _iec_candidates(finding: dict) -> list[dict]:

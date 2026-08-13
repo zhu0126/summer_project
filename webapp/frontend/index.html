@@ -238,6 +238,17 @@
   button#run-btn:disabled { background: var(--border); color: var(--text-faint); cursor: not-allowed; }
 
   /* ---- Scan progress ---- */
+  .progress-bar-track {
+    height: 8px; background: var(--panel); border: 1px solid var(--border);
+    border-radius: 4px; overflow: hidden; margin-bottom: 6px;
+  }
+  .progress-bar-fill { height: 100%; width: 0%; background: var(--accent); transition: width 0.3s ease; }
+  .progress-bar-fill.has-error { background: var(--risk-high); }
+  .progress-bar-label {
+    font-family: "IBM Plex Mono", monospace; font-size: 11px; color: var(--text-faint);
+    margin-bottom: 12px;
+  }
+
   .stage-list { display: flex; flex-direction: column; gap: 8px; }
 
   .stage-row {
@@ -350,6 +361,24 @@
   .scanner-card .scanner-state.done { color: var(--ok); border-color: var(--ok); }
   .scanner-card .scanner-state.skipped { color: var(--text-faint); opacity: 0.7; }
 
+  .scanner-card.clickable, .stat-card.clickable {
+    cursor: pointer; transition: transform 0.1s ease, border-color 0.1s ease;
+  }
+  .scanner-card.clickable:hover, .stat-card.clickable:hover {
+    border-color: var(--accent); transform: translateY(-1px);
+  }
+
+  .filter-banner {
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    background: var(--panel-raised); border: 1px solid var(--accent-dim); border-radius: 4px;
+    padding: 8px 12px; margin-bottom: 12px; font-size: 12.5px; color: var(--accent);
+  }
+  .filter-banner button {
+    background: none; border: 1px solid var(--border); color: var(--text-dim); border-radius: 3px;
+    padding: 3px 9px; font-size: 11.5px; cursor: pointer; font-family: inherit; flex-shrink: 0;
+  }
+  .filter-banner button:hover { border-color: var(--accent); color: var(--text); }
+
   /* ---- Tabs ---- */
   .tab-bar { display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin-bottom: 16px; }
   .tab-btn {
@@ -395,6 +424,11 @@
   .badge.status-matched { color: var(--risk-high); border-color: var(--risk-high); }
   .badge.status-needs_review { color: var(--risk-medium); border-color: var(--risk-medium); }
   .badge.status-no_match { color: var(--ok); border-color: var(--ok); }
+
+  .badge.conf-badge { cursor: help; }
+  .badge.conf-high { color: var(--ok); border-color: var(--ok); }
+  .badge.conf-medium { color: var(--risk-medium); border-color: var(--risk-medium); }
+  .badge.conf-low { color: var(--risk-low); border-color: var(--risk-low); }
 
   /* ---- Compliance ---- */
   .compliance-section { margin-bottom: 24px; }
@@ -612,6 +646,8 @@
   <div class="col">
     <div class="panel">
       <h2>Scan Progress</h2>
+      <div class="progress-bar-track"><div class="progress-bar-fill" id="progress-bar-fill"></div></div>
+      <div class="progress-bar-label" id="progress-bar-label"></div>
       <div class="stage-list" id="stage-list"></div>
       <div class="error-box" id="error-box"></div>
     </div>
@@ -707,13 +743,13 @@ document.querySelectorAll(".tool-toggle").forEach(btn => {
   });
 });
 
+function switchTab(name) {
+  document.querySelectorAll(".tab-btn").forEach(b => b.classList.toggle("active", b.dataset.tab === name));
+  document.querySelectorAll(".tab-panel").forEach(p => { p.hidden = p.id !== `tab-${name}`; });
+}
+
 document.querySelectorAll(".tab-btn").forEach(btn => {
-  btn.addEventListener("click", () => {
-    document.querySelectorAll(".tab-btn").forEach(b => b.classList.remove("active"));
-    document.querySelectorAll(".tab-panel").forEach(p => p.hidden = true);
-    btn.classList.add("active");
-    document.getElementById(`tab-${btn.dataset.tab}`).hidden = false;
-  });
+  btn.addEventListener("click", () => switchTab(btn.dataset.tab));
 });
 
 function setStatus(state, text) {
@@ -724,14 +760,30 @@ function setStatus(state, text) {
 
 // ---- Scan progress ----
 
+const STAGE_FINISHED_STATUSES = ["done", "skipped", "error"];
+
 function renderStages(stages) {
   const list = document.getElementById("stage-list");
+  const fill = document.getElementById("progress-bar-fill");
+  const label = document.getElementById("progress-bar-label");
   list.innerHTML = "";
+
   if (!stages) {
     list.innerHTML = `<div class="empty-note">尚未執行掃描。設定好左側參數後按「執行掃描」。</div>`;
+    fill.style.width = "0%";
+    fill.classList.remove("has-error");
+    label.textContent = "";
     return;
   }
-  Object.values(stages).forEach(stage => {
+
+  const values = Object.values(stages);
+  const finished = values.filter(s => STAGE_FINISHED_STATUSES.includes(s.status)).length;
+  const percent = values.length ? Math.round((finished / values.length) * 100) : 0;
+  fill.style.width = `${percent}%`;
+  fill.classList.toggle("has-error", values.some(s => s.status === "error"));
+  label.textContent = `${percent}%（${finished}/${values.length} 階段完成）`;
+
+  values.forEach(stage => {
     const row = document.createElement("div");
     row.className = "stage-row";
     row.innerHTML = `
@@ -744,6 +796,8 @@ function renderStages(stages) {
 
 // ---- Stat cards ----
 
+const RISK_FILTER_LABEL = { high: "High 風險（不符合）", medium: "Medium 風險（不符合）", low: "Low 風險（不符合）" };
+
 function renderStatCards(findings) {
   const counts = { high: 0, medium: 0, low: 0 };
   findings.forEach(f => {
@@ -751,11 +805,15 @@ function renderStatCards(findings) {
   });
   const el = document.getElementById("stat-cards");
   el.innerHTML = `
-    <div class="stat-card high"><div class="num">${counts.high}</div><div class="lbl">High</div></div>
-    <div class="stat-card medium"><div class="num">${counts.medium}</div><div class="lbl">Medium</div></div>
-    <div class="stat-card low"><div class="num">${counts.low}</div><div class="lbl">Low</div></div>
+    <div class="stat-card high clickable" data-risk="high"><div class="num">${counts.high}</div><div class="lbl">High</div></div>
+    <div class="stat-card medium clickable" data-risk="medium"><div class="num">${counts.medium}</div><div class="lbl">Medium</div></div>
+    <div class="stat-card low clickable" data-risk="low"><div class="num">${counts.low}</div><div class="lbl">Low</div></div>
     <div class="stat-card total"><div class="num">${findings.length}</div><div class="lbl">Total Findings</div></div>
   `;
+  el.querySelectorAll(".stat-card.clickable").forEach(card => {
+    const risk = card.dataset.risk;
+    card.addEventListener("click", () => setFilter({ type: "risk", value: risk, label: RISK_FILTER_LABEL[risk] }));
+  });
 }
 
 // ---- Downloads ----
@@ -809,6 +867,11 @@ function renderScannerSummary(findings, stages) {
         : "本次未執行此掃描"}</div>
       <span class="scanner-state ${stateClass}">${stateLabel}</span>
     `;
+    if (executed && items.length > 0) {
+      card.classList.add("clickable");
+      card.title = "點擊查看這個工具掃到的 Findings";
+      card.addEventListener("click", () => setFilter({ type: "source", value: source, label: SOURCE_LABEL[source] }));
+    }
     grid.appendChild(card);
   });
 }
@@ -828,12 +891,49 @@ function detailLine(detail) {
   return entries.map(([k, v]) => `${k}: ${v}`).join("  ·  ");
 }
 
-function renderFindings(findings) {
+// ---- Findings 篩選（點擊 Scanner 摘要卡片／統計卡片觸發） ----
+
+let currentFindings = [];
+let activeFilter = null; // {type: "source"|"risk", value: string, label: string}
+
+function applyFilter(findings) {
+  if (!activeFilter) return findings;
+  if (activeFilter.type === "source") return findings.filter(f => f.source === activeFilter.value);
+  if (activeFilter.type === "risk") return findings.filter(f => f.status === "matched" && f.risk_level === activeFilter.value);
+  return findings;
+}
+
+function setFilter(filter) {
+  activeFilter = filter;
+  switchTab("findings");
+  renderFindings(currentFindings);
+}
+
+function clearFilter() {
+  activeFilter = null;
+  renderFindings(currentFindings);
+}
+
+function renderFindings(allFindings) {
   const container = document.getElementById("findings-content");
   container.innerHTML = "";
 
+  if (activeFilter) {
+    const filteredCount = applyFilter(allFindings).length;
+    const banner = document.createElement("div");
+    banner.className = "filter-banner";
+    banner.innerHTML = `<span>篩選中：${escapeHtml(activeFilter.label)}（${filteredCount} 筆）</span><button type="button">清除篩選 ✕</button>`;
+    banner.querySelector("button").addEventListener("click", clearFilter);
+    container.appendChild(banner);
+  }
+
+  const findings = applyFilter(allFindings);
+
   if (findings.length === 0) {
-    container.innerHTML = `<div class="empty-note">本次掃描沒有發現任何項目。</div>`;
+    const note = document.createElement("div");
+    note.className = "empty-note";
+    note.textContent = activeFilter ? "符合篩選條件的項目為 0 筆。" : "本次掃描沒有發現任何項目。";
+    container.appendChild(note);
     return;
   }
 
@@ -871,13 +971,33 @@ function renderFindings(findings) {
 
 // ---- Compliance tab ----
 
-function renderCandidateGroup(label, items, idField, titleField) {
+// 信心分數轉標籤的門檻，跟 core/report.py 的 confidence_label() 必須維持
+// 一致——兩邊各自實作（一個是這裡的 JS 給網頁用，一個是 Jinja filter
+// 給 Markdown 報告用），沒有共用模組可以 import，改動時兩邊要一起改。
+function confidenceLabel(score) {
+  if (typeof score !== "number") return null;
+  if (score >= 0.80) return { text: "高", cls: "conf-high" };
+  if (score >= 0.60) return { text: "中", cls: "conf-medium" };
+  return { text: "低", cls: "conf-low" };
+}
+
+function confidenceBadge(score) {
+  const label = confidenceLabel(score);
+  if (!label) return "";
+  return ` <span class="badge conf-badge ${label.cls}" title="檢索相似度：${score.toFixed(3)}">${label.text}</span>`;
+}
+
+function truncateText(text, max) {
+  const t = String(text ?? "").trim();
+  return t.length > max ? t.slice(0, max).trim() + "…" : t;
+}
+
+function renderCandidateGroup(label, items, idField, bodyFn) {
   if (!items || items.length === 0) return "";
   const lines = items.map(c => {
     const id = c[idField] || "";
-    const title = titleField ? (c[titleField] || "") : "";
-    const score = typeof c.score === "number" ? `（分數 ${c.score.toFixed(2)}）` : "";
-    return `<div class="candidate-item"><span class="cid">${escapeHtml(id)}</span> ${escapeHtml(title)}${score}</div>`;
+    const body = bodyFn(c);
+    return `<div class="candidate-item"><span class="cid">${escapeHtml(id)}</span> ${escapeHtml(body)}${confidenceBadge(c.score)}</div>`;
   }).join("");
   return `<div class="candidate-group"><div class="cg-label">${escapeHtml(label)}</div>${lines}</div>`;
 }
@@ -934,9 +1054,9 @@ function renderCompliance(findings, processRequirements) {
       const card = document.createElement("details");
       card.className = "review-card";
       const candidatesHtml = [
-        renderCandidateGroup("CWE 候選", s.cwe, "cwe_id", "name"),
-        renderCandidateGroup("IEC 62443-4-2 候選", s.iec, "article_no", "title"),
-        renderCandidateGroup("CRA 候選", s.cra, "article_no", "title"),
+        renderCandidateGroup("CWE 候選", s.cwe, "cwe_id", c => c.name || ""),
+        renderCandidateGroup("IEC 62443-4-2 候選", s.iec, "article_no", c => c.title || ""),
+        renderCandidateGroup("CRA 候選", s.cra, "article_no", c => truncateText(c.text_zh || c.text || c.title || "", 200)),
       ].join("") || `<div class="empty-note">語意檢索目前沒有回傳候選（可能是知識庫尚未建立或連線失敗）。</div>`;
 
       const llmHtml = f.llm_advice ? `
@@ -985,12 +1105,15 @@ function renderResults(result) {
     document.getElementById(id).classList.add("visible");
   });
 
-  const findings = result.merged_findings || [];
-  renderStatCards(findings);
+  // 新一輪掃描結果進來時，舊的篩選條件（可能指到已經不存在的 target/source）
+  // 沒有意義了，重置成未篩選狀態。
+  activeFilter = null;
+  currentFindings = result.merged_findings || [];
+  renderStatCards(currentFindings);
   renderDownloads(result);
-  renderScannerSummary(findings, currentStages);
-  renderFindings(findings);
-  renderCompliance(findings, result.process_requirements);
+  renderScannerSummary(currentFindings, currentStages);
+  renderFindings(currentFindings);
+  renderCompliance(currentFindings, result.process_requirements);
 }
 
 function hideResults() {

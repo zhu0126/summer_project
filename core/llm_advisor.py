@@ -27,8 +27,11 @@ RAG 的最後一段：把檢索到的 CWE / IEC 62443 / CRA 候選 + finding 本
 或 API 呼叫失敗，一律回傳 None 並印警告，讓分析流程照常跑完——
 跟 CWE/CRA 知識庫連不上時的降級方式一致。
 """
+import json
 import os
 import re
+
+from pathlib import Path
 
 try:
     from dotenv import load_dotenv
@@ -155,6 +158,83 @@ def ask_gemini(system_instruction: str, prompt: str) -> str | None:
         # 讓整份報告產不出來，掃描結果本身仍然是有價值的產出。
         print(f"[llm_advisor] Gemini 呼叫失敗，略過 LLM 研判（{e}）")
         return None
+
+
+# CRA 條文中譯快取：翻譯結果只跟 article_no 本身有關（跟哪一筆 finding
+# 觸發了這次檢索無關），同一條文在整場掃描、甚至跨掃描都應該只呼叫一次
+# Gemini。存成檔案而不是只放記憶體，是因為 CLI 每次執行都是全新的 process，
+# 只有記憶體快取的話，同一批常見條文（telnet、預設密碼那幾條）每次掃描
+# 都要重譯一次，白白多付 API 成本。
+CRA_TRANSLATION_CACHE_PATH = (
+    Path(__file__).resolve().parent.parent / "cra_kb" / "cra_data" / "cra_zh_cache.json"
+)
+
+CRA_TRANSLATE_SYSTEM_INSTRUCTION = """You are helping a product security engineer understand one article of the EU Cyber Resilience Act (Regulation (EU) 2024/2847), given its official English text.
+
+Rules:
+1. Do not produce a literal legal translation. Rewrite the requirement in Traditional Chinese (zh-TW) as concrete, actionable guidance — what a manufacturer or product team should actually do to address it.
+2. Base your answer only on the given article text. Do not invent obligations that are not present in it, and do not cite other articles.
+3. If the article is purely definitional, procedural, or scope-setting (e.g. definitions, entry into force, scope of the Regulation) and has no actionable technical requirement, summarize its purpose in one short sentence instead of forcing an action item.
+4. Output plain Traditional Chinese text only. No markdown, no bullet points, no headings, no leading label. At most 150 characters."""
+
+# 條文全文送進翻譯 prompt 前的字元上限，理由跟 rag_context.py 的
+# MAX_CHARS_PER_ENTRY 一致：CRA 少數條文（如 Article 13）有好幾千字，
+# 而且真正決定「這條在講什麼」的通常是開頭幾段。
+CRA_TRANSLATE_INPUT_MAX_CHARS = 4000
+
+
+def _load_cra_translation_cache() -> dict:
+    if not CRA_TRANSLATION_CACHE_PATH.is_file():
+        return {}
+    try:
+        return json.loads(CRA_TRANSLATION_CACHE_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as e:
+        print(f"[llm_advisor] 警告：CRA 中譯快取讀取失敗，視為空快取（{e}）")
+        return {}
+
+
+def _save_cra_translation_cache(cache: dict) -> None:
+    try:
+        CRA_TRANSLATION_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        CRA_TRANSLATION_CACHE_PATH.write_text(
+            json.dumps(cache, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+    except OSError as e:
+        # 寫檔失敗（例如唯讀檔案系統）不該讓這次已經拿到的翻譯結果作廢，
+        # 只是下次沒辦法吃到快取、要重新呼叫一次 Gemini。
+        print(f"[llm_advisor] 警告：CRA 中譯快取寫入失敗，本次翻譯結果不會保留（{e}）")
+
+
+def translate_cra_article(article_no: str, title: str, text: str) -> str | None:
+    """
+    把一條 CRA 條文的英文原文，轉成一段具體可執行的繁體中文說明，取代
+    直接顯示 title（title 常常只是像 "Reporting obligations" 這種標題，
+    看不出實際要做什麼）。
+
+    回傳 None 代表這條路徑不可用（沒金鑰/沒套件/呼叫失敗），呼叫端
+    應該退回顯示原文（text）或 title，不能讓整筆候選因此消失——跟
+    llm_advisor 其他函式一致的降級原則。
+    """
+    if not article_no:
+        return None
+
+    cache = _load_cra_translation_cache()
+    if article_no in cache:
+        return cache[article_no]
+
+    truncated = (text or "").strip()
+    if len(truncated) > CRA_TRANSLATE_INPUT_MAX_CHARS:
+        truncated = truncated[:CRA_TRANSLATE_INPUT_MAX_CHARS].rstrip() + "……"
+
+    prompt = f"Article: {article_no} — {title}\n\n{truncated}"
+    answer = ask_gemini(CRA_TRANSLATE_SYSTEM_INSTRUCTION, prompt)
+    if answer is None:
+        return None
+
+    result = answer.strip()
+    cache[article_no] = result
+    _save_cra_translation_cache(cache)
+    return result
 
 
 def build_prompt(finding: dict, context: str) -> str:

@@ -65,7 +65,7 @@
 
 CWE 候選：
 {% for c in item.rag_suggestions.cwe %}
-- `{{ c.cwe_id }}` {{ c.name }}{% if c.score %}（分數 {{ "%.2f" | format(c.score) }}）{% endif %}{% if c.matched_by %} [{{ c.matched_by | join("+") }}]{% endif %}
+- `{{ c.cwe_id }}` {{ c.name }}{% if c.score is not none %}（信心：{{ c.score | confidence_label }}）{% endif %}
 
 {% endfor %}
 {% endif %}
@@ -73,7 +73,7 @@ CWE 候選：
 
 IEC 62443-4-2 候選（元件技術要求）：
 {% for c in item.rag_suggestions.iec %}
-- {{ c.article_no }} {{ c.title }}{% if c.group %}｜{{ c.group }}{% endif %}{% if c.score %}（分數 {{ "%.2f" | format(c.score) }}）{% endif %}{% if c.matched_by %} [{{ c.matched_by | join("+") }}]{% endif %}
+- {{ c.article_no }} {{ c.title }}{% if c.group %}｜{{ c.group }}{% endif %}{% if c.score is not none %}（信心：{{ c.score | confidence_label }}）{% endif %}
 
 {% endfor %}
 {% endif %}
@@ -81,7 +81,7 @@ IEC 62443-4-2 候選（元件技術要求）：
 
 CRA 候選：
 {% for c in item.rag_suggestions.cra %}
-- {{ c.article_no }}（{{ c.title }}{% if c.score %}，分數 {{ "%.2f" | format(c.score) }}{% endif %}）{% if c.matched_by %} [{{ c.matched_by | join("+") }}]{% endif %}
+- {{ c.article_no }}：{{ (c.text_zh or c.text or c.title or "") | truncate(200) }}{% if c.score is not none %}（信心：{{ c.score | confidence_label }}）{% endif %}
 
 {% endfor %}
 {% endif %}
@@ -116,7 +116,7 @@ CRA 候選：
 {{ process_requirements.candidates | length }} 條；正式自評請以標準原文為準。
 
 {% for c in process_requirements.candidates %}
-- **{{ c.article_no }} {{ c.title }}**{% if c.group %}｜{{ c.group }}{% endif %}{% if c.score %}（分數 {{ "%.2f" | format(c.score) }}）{% endif %}{% if c.matched_by %} [{{ c.matched_by | join("+") }}]{% endif %}
+- **{{ c.article_no }} {{ c.title }}**{% if c.group %}｜{{ c.group }}{% endif %}{% if c.score is not none %}（信心：{{ c.score | confidence_label }}）{% endif %}
 
 {% endfor %}
 {% endif %}
