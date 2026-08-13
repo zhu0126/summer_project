@@ -204,6 +204,24 @@ def _llm_advice(finding: dict, suggestions: dict) -> dict | None:
         return None
 
 
+def _fallback_risk_level(finding: dict) -> str:
+    """
+    規則沒比對到時，needs_review 項目要顯示的風險等級。
+
+    ZAP 對每個 alert 都有自己規則庫判斷出來的風險（High/Medium/Low/
+    Informational），已經在 zap_scan.py 正規化存進 detail.zap_risk——
+    這是 ZAP 自己規則比對出的結果，不是向量相似度那種「無法區分訊號
+    跟雜訊」的分數（見本檔案開頭的說明），可以直接拿來當顯示用的風險
+    等級，沒有理由把它壓成統一的 info，讓畫面上一堆明明 ZAP 判斷是
+    High/Medium 的項目全部看起來一樣不重要。
+
+    nmap/binwalk 沒有這種工具自帶的風險分級（開放的 port、韌體裡的
+    字串都只是「事實」，沒有附風險判斷），這兩種來源維持 info。
+    """
+    zap_risk = (finding.get("detail") or {}).get("zap_risk")
+    return zap_risk if zap_risk in ("high", "medium", "low", "info") else "info"
+
+
 def analyze_finding(finding: dict, use_llm: bool = False) -> dict:
     """
     分析單一 finding：
@@ -236,7 +254,7 @@ def analyze_finding(finding: dict, use_llm: bool = False) -> dict:
         "target": finding["target"],
         "title": finding["title"],
         "status": "needs_review",
-        "risk_level": "info",
+        "risk_level": _fallback_risk_level(finding),
         "recommendation": None,
         "cra_reference": None,
         "cwe_id": None,

@@ -463,8 +463,26 @@
   .review-card .review-body { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); font-size: 12.5px; }
   .review-card .candidate-group { margin-bottom: 8px; }
   .review-card .candidate-group .cg-label { font-size: 11px; color: var(--text-dim); text-transform: uppercase; margin-bottom: 4px; }
-  .review-card .candidate-item { color: var(--text-dim); margin-bottom: 2px; }
+  .review-card .candidate-item {
+    display: flex; align-items: center; flex-wrap: wrap; gap: 6px;
+    color: var(--text-dim); margin-bottom: 4px;
+  }
   .review-card .candidate-item .cid { color: var(--accent); font-family: "IBM Plex Mono", monospace; }
+
+  .adopt-btn {
+    margin-left: auto; background: none; border: 1px solid var(--accent-dim); color: var(--accent);
+    border-radius: 10px; padding: 1px 9px; font-size: 10.5px; cursor: pointer; font-family: inherit;
+    flex-shrink: 0;
+  }
+  .adopt-btn:hover { border-color: var(--accent); background: rgba(94, 184, 255, 0.08); }
+  .candidate-confirmed { margin-left: auto; color: var(--ok); font-size: 11px; font-weight: 600; flex-shrink: 0; }
+
+  .expand-candidates-btn {
+    display: block; background: none; border: none; color: var(--accent); font-size: 11.5px;
+    cursor: pointer; font-family: inherit; padding: 4px 0; text-decoration: underline;
+  }
+
+  .badge.status-resolved { color: var(--ok); border-color: var(--ok); }
   .review-card .llm-advice { margin-top: 10px; padding: 10px 12px; background: #0B1424; border-radius: 3px; border: 1px solid var(--border); }
   .review-card .llm-advice .llm-label { font-size: 11px; color: var(--text-faint); margin-bottom: 4px; }
 
@@ -752,6 +770,25 @@ document.querySelectorAll(".tab-btn").forEach(btn => {
   btn.addEventListener("click", () => switchTab(btn.dataset.tab));
 });
 
+// 用事件委派掛在容器上，而不是逐一 render 完再個別綁定：候選清單裡的
+// 「查看更多」「採納/綁定」按鈕會在展開／確認之後被替換或新增，
+// 綁在固定不變的父層容器上一次就夠，不用每次 render 後重新綁定。
+document.getElementById("compliance-content").addEventListener("click", (e) => {
+  const expandBtn = e.target.closest(".expand-candidates-btn");
+  if (expandBtn) {
+    const target = document.getElementById(expandBtn.dataset.target);
+    if (!target) return;
+    const nowHidden = !target.hidden;
+    target.hidden = nowHidden;
+    expandBtn.textContent = nowHidden ? expandBtn.dataset.moreLabel : expandBtn.dataset.lessLabel;
+    return;
+  }
+  const adoptBtn = e.target.closest(".adopt-btn");
+  if (adoptBtn) {
+    adoptCandidate(adoptBtn.dataset.finding, adoptBtn.dataset.group, adoptBtn.dataset.id, adoptBtn);
+  }
+});
+
 function setStatus(state, text) {
   const pill = document.getElementById("status-pill");
   pill.className = "status-pill" + (state ? " " + state : "");
@@ -992,14 +1029,73 @@ function truncateText(text, max) {
   return t.length > max ? t.slice(0, max).trim() + "…" : t;
 }
 
-function renderCandidateGroup(label, items, idField, bodyFn) {
+// ---- 候選條文「採納/綁定」---- 純前端的複核註記，不會送回後端或跨掃描
+// 保留：目的是讓人工複核時可以在畫面上快速標記「我採用這條候選」，
+// 沒有對應的 API 可以持久化這個決定，重新整理或跑新一次掃描就會清空。
+const adoptedCandidates = new Map(); // findingId -> Set("group::id")
+
+function candidateKey(group, id) { return `${group}::${id}`; }
+
+function isCandidateAdopted(findingId, group, id) {
+  const set = adoptedCandidates.get(findingId);
+  return !!set && set.has(candidateKey(group, id));
+}
+
+function adoptCandidate(findingId, group, id, buttonEl) {
+  if (!adoptedCandidates.has(findingId)) adoptedCandidates.set(findingId, new Set());
+  adoptedCandidates.get(findingId).add(candidateKey(group, id));
+
+  // 直接替換被點擊的按鈕本身、更新對應的狀態徽章，不整段重新 render——
+  // 避免使用者展開中的 <details>／候選清單被重新 render 收合回去。
+  const span = document.createElement("span");
+  span.className = "candidate-confirmed";
+  span.textContent = "✓ 已確認";
+  buttonEl.replaceWith(span);
+
+  const card = span.closest(".review-card");
+  const badge = card ? card.querySelector(".review-status-badge") : null;
+  if (badge) {
+    badge.className = "badge status-resolved review-status-badge";
+    badge.textContent = "已合規 / 已評估";
+  }
+}
+
+// 預設每組只顯示最相關（Top N）的候選，其餘收在「查看更多候選條文」
+// 展開連結後面——候選清單已經是依相關性排序，優先讓人看到最有可能
+// 相關的那一筆，而不是一次塞 5 條要人逐一篩選。
+function renderCandidateGroup(label, items, idField, bodyFn, opts) {
   if (!items || items.length === 0) return "";
-  const lines = items.map(c => {
+  opts = opts || {};
+  const limit = opts.limit || items.length;
+  const visible = items.slice(0, limit);
+  const hidden = items.slice(limit);
+
+  const renderItem = (c) => {
     const id = c[idField] || "";
     const body = bodyFn(c);
-    return `<div class="candidate-item"><span class="cid">${escapeHtml(id)}</span> ${escapeHtml(body)}${confidenceBadge(c.score)}</div>`;
-  }).join("");
-  return `<div class="candidate-group"><div class="cg-label">${escapeHtml(label)}</div>${lines}</div>`;
+    const adopted = opts.findingId && isCandidateAdopted(opts.findingId, opts.group, id);
+    let adoptControl = "";
+    if (opts.findingId) {
+      adoptControl = adopted
+        ? `<span class="candidate-confirmed">✓ 已確認</span>`
+        : `<button type="button" class="adopt-btn" data-finding="${escapeHtml(opts.findingId)}" data-group="${escapeHtml(opts.group)}" data-id="${escapeHtml(id)}">採納 / 綁定</button>`;
+    }
+    return `<div class="candidate-item"><span class="cid">${escapeHtml(id)}</span> ${escapeHtml(body)}${confidenceBadge(c.score)}${adoptControl}</div>`;
+  };
+
+  const visibleHtml = visible.map(renderItem).join("");
+  let expandHtml = "";
+  if (hidden.length > 0) {
+    const hiddenId = `hidden-${escapeHtml(opts.groupId || `${opts.findingId}-${opts.group}`)}`;
+    expandHtml = `
+      <button type="button" class="expand-candidates-btn" data-target="${hiddenId}"
+        data-more-label="查看更多候選條文 (+${hidden.length})" data-less-label="收合候選條文 ▲">
+        查看更多候選條文 (+${hidden.length})
+      </button>
+      <div class="candidate-hidden" id="${hiddenId}" hidden>${hidden.map(renderItem).join("")}</div>`;
+  }
+
+  return `<div class="candidate-group"><div class="cg-label">${escapeHtml(label)}</div>${visibleHtml}${expandHtml}</div>`;
 }
 
 function renderCompliance(findings, processRequirements) {
@@ -1054,9 +1150,12 @@ function renderCompliance(findings, processRequirements) {
       const card = document.createElement("details");
       card.className = "review-card";
       const candidatesHtml = [
-        renderCandidateGroup("CWE 候選", s.cwe, "cwe_id", c => c.name || ""),
-        renderCandidateGroup("IEC 62443-4-2 候選", s.iec, "article_no", c => c.title || ""),
-        renderCandidateGroup("CRA 候選", s.cra, "article_no", c => truncateText(c.text_zh || c.text || c.title || "", 200)),
+        renderCandidateGroup("CWE 候選", s.cwe, "cwe_id", c => c.name || "",
+          { findingId: f.finding_id, group: "cwe", limit: 1 }),
+        renderCandidateGroup("IEC 62443-4-2 候選", s.iec, "article_no", c => c.title || "",
+          { findingId: f.finding_id, group: "iec" }),
+        renderCandidateGroup("CRA 候選", s.cra, "article_no", c => truncateText(c.text_zh || c.text || c.title || "", 200),
+          { findingId: f.finding_id, group: "cra", limit: 1 }),
       ].join("") || `<div class="empty-note">語意檢索目前沒有回傳候選（可能是知識庫尚未建立或連線失敗）。</div>`;
 
       const llmHtml = f.llm_advice ? `
@@ -1068,7 +1167,7 @@ function renderCompliance(findings, processRequirements) {
       card.innerHTML = `
         <summary>
           <span class="review-title">${escapeHtml(f.title)}（${escapeHtml(f.target)}）</span>
-          ${statusBadge(f.status)}
+          <span class="badge status-${f.status} review-status-badge">${STATUS_LABEL[f.status] || f.status}</span>
         </summary>
         <div class="review-body">
           ${candidatesHtml}
