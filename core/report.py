@@ -18,6 +18,7 @@ from jinja2 import Environment, FileSystemLoader
 
 from core.common import get_output_dir
 from core.analysis import analyze_findings, scan_level_process_requirements
+from core.findings_merge import merge_findings_and_analysis, group_by_target  # noqa: F401  (re-export，見 findings_merge.py 說明)
 from core import llm_advisor
 
 TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "templates"
@@ -37,52 +38,6 @@ def build_scan_metadata(operator: str = "unknown", ip: str = "", firmware: str =
         "firmware": firmware,
         "url": url,
     }
-
-
-def merge_findings_and_analysis(findings: list[dict], analysis_results: list[dict]) -> list[dict]:
-    """
-    用 finding_id 把兩份各自獨立的資料合併成一份，讓樣板可以直接逐筆
-    迭代印出，不需要在 Jinja2 樣板裡寫查找比對的邏輯。
-
-    已修正的 bug：這裡原本只複製 status/risk_level/recommendation/
-    cra_reference 四個欄位，漏掉了 analysis.py 後來新增的
-    rag_suggestions——樣板裡的「待複核項目」章節讀 item.rag_suggestions
-    永遠是 undefined，於是每一筆都印成「語意檢索目前沒有回傳候選」，
-    看起來像知識庫連不上，實際上是候選在合併這一步就被丟掉了。
-    Jinja2 對未定義變數預設是靜默當成 falsy，不會報錯，所以這種
-    「少複製一個欄位」的漏洞完全不會有任何錯誤訊息。
-    """
-    analysis_by_id = {a["finding_id"]: a for a in analysis_results}
-
-    merged = []
-    for f in findings:
-        analysis = analysis_by_id.get(f["finding_id"], {})
-        merged.append({
-            **f,
-            "status": analysis.get("status", "no_match"),
-            "risk_level": analysis.get("risk_level", "info"),
-            "recommendation": analysis.get("recommendation"),
-            "cra_reference": analysis.get("cra_reference"),
-            "rag_suggestions": analysis.get("rag_suggestions"),
-            "llm_advice": analysis.get("llm_advice"),
-        })
-    return merged
-
-
-def group_by_target(merged_findings: list[dict]) -> list[dict]:
-    """
-    把 findings 依 target 分組，讓 Findings 章節能用「target 當標題、
-    底下列出該目標的所有項目」的方式呈現，不用在每一行都重複印一次
-    target——三個掃描目標（IP/firmware/URL）各自可能產生好幾筆
-    finding，攤平列表時 target 欄位會重複很多次，分組後可讀性更好。
-    保留 target 第一次出現的順序（不重新排序），對應原本 findings
-    出現的先後。
-    """
-    groups: dict[str, list[dict]] = {}
-    for item in merged_findings:
-        groups.setdefault(item["target"], []).append(item)
-
-    return [{"target": target, "findings": items} for target, items in groups.items()]
 
 
 # 信心分數轉標籤的門檻，跟 webapp/frontend/index.html 的 confidenceLabel()
