@@ -430,6 +430,43 @@
   .badge.conf-medium { color: var(--risk-medium); border-color: var(--risk-medium); }
   .badge.conf-low { color: var(--risk-low); border-color: var(--risk-low); }
 
+  /* ---- PentestGPT 測試計畫 ---- */
+  .pentest-plan-panel {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 4px;
+    padding: 14px 16px; margin-bottom: 24px;
+  }
+  .pentest-plan-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .pentest-plan-head h3 {
+    font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-dim); margin: 0;
+  }
+  #generate-plan-btn {
+    background: var(--accent); color: #0B1420; border: none; padding: 7px 14px; border-radius: 3px;
+    font-family: "IBM Plex Sans", sans-serif; font-weight: 600; font-size: 12.5px; cursor: pointer;
+  }
+  #generate-plan-btn:hover { filter: brightness(1.08); }
+  #generate-plan-btn:disabled { background: var(--border); color: var(--text-faint); cursor: not-allowed; }
+
+  .pentest-plan-warning {
+    font-size: 11.5px; color: var(--risk-medium); margin-top: 10px; line-height: 1.6;
+  }
+
+  .plan-card {
+    background: var(--panel-raised); border: 1px solid var(--border); border-left: 3px solid var(--accent);
+    border-radius: 4px; padding: 12px 14px; margin-top: 12px;
+  }
+  .plan-card .plan-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 6px; }
+  .plan-card .plan-title { font-size: 13.5px; font-weight: 600; }
+  .plan-card .plan-meta { font-size: 12px; color: var(--text-dim); margin-bottom: 4px; }
+  .plan-card .plan-meta .mono { font-family: "IBM Plex Mono", monospace; color: var(--text-faint); }
+  .plan-card .plan-objective { font-size: 12.5px; margin: 8px 0; line-height: 1.6; }
+  .plan-card .plan-cmd-label { font-size: 11px; color: var(--text-faint); margin-top: 8px; margin-bottom: 3px; }
+  .plan-card .plan-cmd {
+    background: #0B1424; border: 1px solid var(--border); border-radius: 3px; padding: 8px 10px;
+    font-family: "IBM Plex Mono", monospace; font-size: 11.5px; color: #C3D2EF;
+    white-space: pre-wrap; word-break: break-all; margin: 0;
+  }
+  .plan-card .plan-legacy-instruction { font-size: 12px; color: var(--text-dim); margin-top: 4px; }
+
   /* ---- Compliance ---- */
   .compliance-section { margin-bottom: 24px; }
   .compliance-section > h3 {
@@ -696,6 +733,14 @@
       </div>
 
       <div class="tab-panel" id="tab-compliance" hidden>
+        <div class="pentest-plan-panel">
+          <div class="pentest-plan-head">
+            <h3>PentestGPT 測試計畫</h3>
+            <button type="button" id="generate-plan-btn">產生測試計畫</button>
+          </div>
+          <div class="pentest-plan-warning">⚠️ 指令只會顯示在畫面上，不會自動執行。這些指令會對目標實際發動滲透測試，只能對你明確有權限測試的目標手動執行。</div>
+          <div id="pentest-plan-content"></div>
+        </div>
         <div id="compliance-content"></div>
       </div>
     </div>
@@ -786,6 +831,73 @@ document.getElementById("compliance-content").addEventListener("click", (e) => {
   const adoptBtn = e.target.closest(".adopt-btn");
   if (adoptBtn) {
     adoptCandidate(adoptBtn.dataset.finding, adoptBtn.dataset.group, adoptBtn.dataset.id, adoptBtn);
+  }
+});
+
+// ---- PentestGPT 測試計畫 ----
+// 只產生計畫與指令、顯示在畫面上，不會呼叫任何會真的發動攻擊的 API——
+// 跟 core/pentest_planner.py 的定位一致：這裡是給人看、給人複製指令的地方。
+
+function renderPentestPlan(plan) {
+  const content = document.getElementById("pentest-plan-content");
+  content.innerHTML = "";
+
+  if (!plan || plan.length === 0) {
+    content.innerHTML = `<div class="empty-note">本次掃描沒有可供 PentestGPT 嘗試的活目標（network/webapp）項目。</div>`;
+    return;
+  }
+
+  plan.forEach(item => {
+    const card = document.createElement("div");
+    card.className = "plan-card";
+    const req = item.requirement;
+    const reqLine = req && req.id
+      ? `${escapeHtml(req.id)}（來源：${escapeHtml(req.source)}）`
+      : "（無明確對應要求，用通用目標）";
+    const objMark = item.objective_from_llm ? "" : "（樣板，非 LLM 產生）";
+    const cmd = item.commands || {};
+    card.innerHTML = `
+      <div class="plan-head">
+        <span class="plan-title">${escapeHtml(item.title)}</span>
+        ${statusBadge(item.status)}
+      </div>
+      <div class="plan-meta">目標：<span class="mono">${escapeHtml(item.target)}</span> ・ 來源：${escapeHtml(SOURCE_LABEL[item.source] || item.source)}</div>
+      <div class="plan-meta">對應要求：${reqLine}</div>
+      <div class="plan-objective">測試目標${objMark}：${escapeHtml(item.objective)}</div>
+      <div class="plan-cmd-label">Autonomous（自動嘗試，需 Claude Code / Codex CLI 後端）</div>
+      <pre class="plan-cmd">${escapeHtml(cmd.autonomous || "")}</pre>
+      <div class="plan-cmd-label">Legacy（互動模式，可用 Gemini / Ollama；啟動後把下面的測試目標貼進去）</div>
+      <pre class="plan-cmd">${escapeHtml(cmd.legacy_cmd || "")}</pre>
+      <div class="plan-legacy-instruction">貼入內容：${escapeHtml(cmd.legacy_instruction || "")}</div>
+    `;
+    content.appendChild(card);
+  });
+}
+
+document.getElementById("generate-plan-btn").addEventListener("click", async () => {
+  const btn = document.getElementById("generate-plan-btn");
+  const content = document.getElementById("pentest-plan-content");
+  const originalLabel = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = "產生中...";
+  content.innerHTML = `<div class="empty-note">正在依掃描結果推導測試目標，視 finding 數量可能需要一點時間...</div>`;
+
+  try {
+    const formData = new FormData();
+    formData.set("use_llm", "true");
+    const res = await fetch(`${API}/api/pentest-plan`, { method: "POST", body: formData });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      content.innerHTML = `<div class="empty-note">產生失敗：${escapeHtml(err.detail || res.statusText)}</div>`;
+      return;
+    }
+    const data = await res.json();
+    renderPentestPlan(data.plan || []);
+  } catch (e) {
+    content.innerHTML = `<div class="empty-note">產生失敗：${escapeHtml(String(e))}</div>`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = originalLabel;
   }
 });
 
@@ -1205,9 +1317,11 @@ function renderResults(result) {
   });
 
   // 新一輪掃描結果進來時，舊的篩選條件（可能指到已經不存在的 target/source）
-  // 沒有意義了，重置成未篩選狀態。
+  // 沒有意義了，重置成未篩選狀態；舊的測試計畫也是針對上一次的 findings
+  // 產生的，一併清空，避免使用者誤把畫面上的計畫當成這次掃描的結果。
   activeFilter = null;
   currentFindings = result.merged_findings || [];
+  document.getElementById("pentest-plan-content").innerHTML = "";
   renderStatCards(currentFindings);
   renderDownloads(result);
   renderScannerSummary(currentFindings, currentStages);

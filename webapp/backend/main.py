@@ -26,6 +26,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 from core import project  # noqa: E402
 from core import common  # noqa: E402
+from core import pentest_planner  # noqa: E402
 from scanners import nmap_scan  # noqa: E402
 from scanners import zap_scan  # noqa: E402
 
@@ -214,6 +215,28 @@ def get_current_scan():
     if _job is None:
         raise HTTPException(status_code=404, detail="尚未執行過任何掃描。")
     return _job
+
+
+@app.post("/api/pentest-plan")
+def generate_pentest_plan(use_llm: bool = Form(True)):
+    """
+    Compliance 頁「產生測試計畫」按鈕呼叫的端點：對最近一次完成的掃描結果
+    （_job["result"]["merged_findings"]）跑 pentest_planner.build_test_plan()，
+    回傳給前端直接顯示 pentestgpt 指令。
+
+    只讀取既有掃描結果，不會觸發新掃描；build_test_plan() 本身只產生「計畫
+    與指令字串」，不執行任何攻擊性行為，所以這裡不需要跟 /api/scan 一樣搶
+    _lock——它不寫檔、不碰 common.get_output_dir() 那份全域輸出路徑狀態，
+    跟一次正在跑的掃描不會互相干擾。use_llm=True 時會呼叫 Gemini 幫每個
+    活目標推導測試目標，需要 GEMINI_API_KEY；沒設定時 build_test_plan()
+    會自動降級成通用樣板，不會噴錯。
+    """
+    if _job is None or _job.get("result") is None:
+        raise HTTPException(status_code=404, detail="尚未有完成的掃描結果，請先完成一次掃描。")
+
+    merged_findings = _job["result"].get("merged_findings") or []
+    plan = pentest_planner.build_test_plan(merged_findings, use_llm=use_llm)
+    return {"plan": plan}
 
 
 @app.get("/api/download/{filename}")
