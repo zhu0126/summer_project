@@ -41,7 +41,14 @@ def set_output_dir(path) -> Path:
 # 三個掃描模組（nmap/binwalk/zap）共用同一套 severity 分級與排序，
 # 讓合規判讀層能用同一套邏輯處理不同來源的 finding，不需要為每個
 # source 各寫一套判斷規則。
-SEVERITY_ORDER = {"high": 0, "medium": 1, "low": 2, "info": 3}
+#
+# critical 是額外加的第五級：一般收集層的 finding（開放的 port、韌體字串、
+# ZAP alert）都只是「觀測到的事實」，嚴重程度留給合規判讀層依規則/RAG 判斷，
+# 所以原本 high 就是頂級已經夠用。但 nmap 的 vuln 類 NSE script（見
+# scanners/nmap_scan.py 的 parse_nmap_vuln_findings()）會回報已知 CVE 的
+# CVSS 分數，這是外部、可驗證的評分，CVSS 9.0 以上依業界慣例是 critical
+# 等級，收集層這裡就該有能力如實記錄，不該被四級分類硬壓成 high。
+SEVERITY_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
 
 
 def make_finding(

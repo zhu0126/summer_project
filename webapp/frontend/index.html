@@ -289,7 +289,7 @@
   .stage-pill.error .dot { background: var(--risk-high); }
 
   /* ---- Stat cards ---- */
-  .stat-cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+  .stat-cards { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; }
 
   .stat-card {
     background: var(--panel);
@@ -301,6 +301,8 @@
   .stat-card .num { font-family: "IBM Plex Mono", monospace; font-size: 22px; font-weight: 600; }
   .stat-card .lbl { font-size: 11px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.05em; margin-top: 2px; }
 
+  .stat-card.critical { border-left-color: var(--risk-critical); }
+  .stat-card.critical .num { color: var(--risk-critical); }
   .stat-card.high { border-left-color: var(--risk-high); }
   .stat-card.high .num { color: var(--risk-high); }
   .stat-card.medium { border-left-color: var(--risk-medium); }
@@ -416,6 +418,7 @@
     font-size: 10.5px; padding: 2px 8px; border-radius: 10px; font-family: "IBM Plex Mono", monospace;
     border: 1px solid var(--border); white-space: nowrap;
   }
+  .badge.risk-critical { color: var(--risk-critical); border-color: var(--risk-critical); }
   .badge.risk-high { color: var(--risk-high); border-color: var(--risk-high); }
   .badge.risk-medium { color: var(--risk-medium); border-color: var(--risk-medium); }
   .badge.risk-low { color: var(--risk-low); border-color: var(--risk-low); }
@@ -759,7 +762,7 @@ const STAGE_STATUS_LABEL = {
   error: "失敗",
 };
 
-const RISK_LABEL = { high: "HIGH", medium: "MEDIUM", low: "LOW", info: "INFO" };
+const RISK_LABEL = { critical: "CRITICAL", high: "HIGH", medium: "MEDIUM", low: "LOW", info: "INFO" };
 const STATUS_LABEL = { matched: "不符合", needs_review: "待複核", no_match: "未觸發規則" };
 
 const SOURCE_LABEL = { nmap: "Nmap（網路）", binwalk: "Binwalk（韌體）", zap: "ZAP（Web）" };
@@ -945,15 +948,19 @@ function renderStages(stages) {
 
 // ---- Stat cards ----
 
-const RISK_FILTER_LABEL = { high: "High 風險（不符合）", medium: "Medium 風險（不符合）", low: "Low 風險（不符合）" };
+const RISK_FILTER_LABEL = {
+  critical: "Critical 風險（不符合）", high: "High 風險（不符合）",
+  medium: "Medium 風險（不符合）", low: "Low 風險（不符合）",
+};
 
 function renderStatCards(findings) {
-  const counts = { high: 0, medium: 0, low: 0 };
+  const counts = { critical: 0, high: 0, medium: 0, low: 0 };
   findings.forEach(f => {
     if (f.status === "matched" && counts.hasOwnProperty(f.risk_level)) counts[f.risk_level]++;
   });
   const el = document.getElementById("stat-cards");
   el.innerHTML = `
+    <div class="stat-card critical clickable" data-risk="critical"><div class="num">${counts.critical}</div><div class="lbl">Critical</div></div>
     <div class="stat-card high clickable" data-risk="high"><div class="num">${counts.high}</div><div class="lbl">High</div></div>
     <div class="stat-card medium clickable" data-risk="medium"><div class="num">${counts.medium}</div><div class="lbl">Medium</div></div>
     <div class="stat-card low clickable" data-risk="low"><div class="num">${counts.low}</div><div class="lbl">Low</div></div>
@@ -998,7 +1005,7 @@ function renderScannerSummary(findings, stages) {
     const executed = stageInfo && stageInfo.status !== "skipped";
     const items = findings.filter(f => f.source === source);
 
-    const breakdown = { high: 0, medium: 0, low: 0, needs_review: 0 };
+    const breakdown = { critical: 0, high: 0, medium: 0, low: 0, needs_review: 0 };
     items.forEach(f => {
       if (f.status === "matched" && breakdown.hasOwnProperty(f.risk_level)) breakdown[f.risk_level]++;
       if (f.status === "needs_review") breakdown.needs_review++;
@@ -1012,7 +1019,7 @@ function renderScannerSummary(findings, stages) {
       <div class="scanner-name">${SOURCE_LABEL[source]}</div>
       <div class="scanner-count">${executed ? items.length : "—"}</div>
       <div class="scanner-breakdown">${executed
-        ? `High ${breakdown.high} · Medium ${breakdown.medium} · Low ${breakdown.low} · 待複核 ${breakdown.needs_review}`
+        ? `Critical ${breakdown.critical} · High ${breakdown.high} · Medium ${breakdown.medium} · Low ${breakdown.low} · 待複核 ${breakdown.needs_review}`
         : "本次未執行此掃描"}</div>
       <span class="scanner-state ${stateClass}">${stateLabel}</span>
     `;

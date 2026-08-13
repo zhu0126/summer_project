@@ -206,31 +206,80 @@ def _llm_advice(finding: dict, suggestions: dict) -> dict | None:
 
 def _fallback_risk_level(finding: dict) -> str:
     """
-    規則沒比對到時，needs_review 項目要顯示的風險等級。
+    規則沒比對到、也沒有比對到已知 CVE 時（見 _cve_match()），needs_review
+    項目要顯示的風險等級。
 
-    ZAP 對每個 alert 都有自己規則庫判斷出來的風險（High/Medium/Low/
-    Informational），已經在 zap_scan.py 正規化存進 detail.zap_risk——
-    這是 ZAP 自己規則比對出的結果，不是向量相似度那種「無法區分訊號
-    跟雜訊」的分數（見本檔案開頭的說明），可以直接拿來當顯示用的風險
-    等級，沒有理由把它壓成統一的 info，讓畫面上一堆明明 ZAP 判斷是
-    High/Medium 的項目全部看起來一樣不重要。
-
-    nmap/binwalk 沒有這種工具自帶的風險分級（開放的 port、韌體裡的
-    字串都只是「事實」，沒有附風險判斷），這兩種來源維持 info。
+    大部分掃描器在收集層都統一給 severity="info"（開放的 port、韌體裡的
+    字串都只是「事實」，嚴重程度留給這一層判斷），但兩種來源例外，各自
+    有自己可信賴的風險判斷，這裡直接沿用，不該被壓成統一的 info：
+    - ZAP 對每個 alert 有自己規則庫判斷出來的風險（High/Medium/Low/
+      Informational），正規化存在 detail.zap_risk。
+    - nmap 的 vuln 類 NSE script 對已確認的 CVE 有 CVSS 分數依據，直接
+      寫進收集層的 finding['severity']（見 nmap_scan.parse_nmap_vuln_findings）。
+      這兩種都不是向量相似度那種「無法區分訊號跟雜訊」的分數（見本檔案
+      開頭的說明），是外部、可驗證的判斷，可以直接當顯示用的風險等級。
     """
+    severity = finding.get("severity")
+    if severity in ("critical", "high", "medium", "low"):
+        return severity
+
     zap_risk = (finding.get("detail") or {}).get("zap_risk")
-    return zap_risk if zap_risk in ("high", "medium", "low", "info") else "info"
+    return zap_risk if zap_risk in ("critical", "high", "medium", "low", "info") else "info"
+
+
+# CRA 對 vulnerability handling 的義務規定在 Annex I Part II，這裡引用第 (1)
+# 條——「識別並記錄產品所含元件與已知弱點」——是 cra_kb/cra_data/cra_articles.json
+# 裡實際存在、對應到這個情境最直接的一條（原文：identify and document
+# vulnerabilities and components contained in products with digital elements,
+# including by drawing up a software bill of materials...），不是憑印象
+# 編出來的條號。
+_CVE_CRA_REFERENCE = "CRA Annex I Part II(1) — 製造商應識別並記錄產品所含元件與已知弱點（含軟體物料清單 SBOM）"
+
+
+def _cve_match(finding: dict) -> dict | None:
+    """
+    nmap 的 vuln 類 NSE script 已經用公開、可驗證的 CVE/CVSS 資料判定這筆
+    finding 確實是個已知弱點（見 nmap_scan.parse_nmap_vuln_findings()），
+    不是語意相似度那種需要人工複核的猜測。地位比照規則比對，直接判定
+    status="matched"，不需要再送進 RAG 候選流程——RAG 候選是給「規則沒有
+    答案、只能用語意檢索找方向」的情況用的，這裡已經有明確答案（CVE 編號）。
+
+    沒有 cve_ids 就代表這不是一筆已比對到 CVE 的 finding，回傳 None，
+    交給呼叫端走原本的 RAG needs_review 路徑。
+    """
+    detail = finding.get("detail") or {}
+    cve_ids = detail.get("cve_ids") or []
+    if not cve_ids:
+        return None
+
+    severity = finding.get("severity", "info")
+    if severity not in ("critical", "high", "medium", "low"):
+        severity = "medium"  # 保守預設：理論上不該發生（見 parse_nmap_vuln_findings），防禦性處理
+
+    cve_list = "、".join(cve_ids)
+    return {
+        "finding_id": finding["finding_id"],
+        "target": finding["target"],
+        "title": finding["title"],
+        "status": "matched",
+        "risk_level": severity,
+        "recommendation": f"已知弱點 {cve_list}，建議儘速更新到已修補版本或套用廠商公告的緩解措施，並確認實際影響範圍。",
+        "cra_reference": _CVE_CRA_REFERENCE,
+    }
 
 
 def analyze_finding(finding: dict, use_llm: bool = False) -> dict:
     """
     分析單一 finding：
-    1. 規則比對（keyword_rules）成功 → 直接採用，這條路徑完全不變，
-       仍然是系統裡唯一會自動判定 status="matched" 的來源
-    2. 規則沒比對到 → 維持 status="needs_review"，附上 rag_suggestions
+    1. 規則比對（keyword_rules）成功 → 直接採用
+    2. 沒比對到規則，但 nmap vuln script 已比對到已知 CVE → 直接採用
+       （見 _cve_match()），這兩條路徑都會自動判定 status="matched"，
+       依據都是外部、可驗證的來源（人工寫死的規則表／公開 CVE 資料庫），
+       不是需要人工複核的猜測
+    3. 兩者都沒有 → 維持 status="needs_review"，附上 rag_suggestions
        （CWE / IEC 62443-4-2 / CRA 各前 N 名候選 + 分數），供人工複核時
        參考，不自動判定
-    3. use_llm=True 時，額外把候選交給 LLM 產出一段文字研判
+    4. use_llm=True 時，額外把候選交給 LLM 產出一段文字研判
        （llm_advice），一樣只是附加的參考意見，不影響 status
 
     use_llm 預設 False 的理由：這條路徑會對外送出請求（掃描結果含
@@ -241,6 +290,11 @@ def analyze_finding(finding: dict, use_llm: bool = False) -> dict:
     rule_result = rule_analyze_finding(finding)
     if rule_result["status"] == "matched":
         return {**rule_result, "cwe_id": None, "confidence": None,
+                "rag_suggestions": None, "llm_advice": None}
+
+    cve_result = _cve_match(finding)
+    if cve_result is not None:
+        return {**cve_result, "cwe_id": None, "confidence": None,
                 "rag_suggestions": None, "llm_advice": None}
 
     suggestions = {

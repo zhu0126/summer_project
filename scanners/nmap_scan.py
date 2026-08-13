@@ -9,6 +9,7 @@
 """
 import argparse
 import ipaddress
+import re
 import subprocess
 import shutil
 import sys
@@ -229,6 +230,177 @@ def parse_nmap_xml(xml_file: str) -> list[dict]:
     return results
 
 
+# ---- NSE vuln script 輸出解析 --------------------------------------------
+#
+# parse_nmap_xml() 只讀 <port> 的 state/service/product/version，對 <script>
+# 元素（不管是掛在 port 底下、還是 host 層級的 <hostscript>）完全不碰——這代表
+# 就算使用者在 UI 上選了「NSE Script 類別」= vuln，nmap 實際上跑出來的已知
+# CVE/CVSS 資訊也完全不會進到 findings 裡，等於「有掃到、卻被程式碼丟掉」。
+# 以下這組函式補上這一段，只解析、不改變 parse_nmap_xml() 既有行為。
+#
+# 只處理遵循 nmap 官方 vulns.lua library 慣例輸出的 script（現行內建
+# --script vuln 分類底下絕大多數腳本，以及第三方的 vulners.nse／
+# vulscan.nse 都是這個格式）：每筆已確認的弱點是一個 <table>，底下有
+# <elem key="state">VULNERABLE</elem>，以及選填的 ids / scores 子表。
+# 沒有用這套 library 的腳本（純文字輸出）不在處理範圍內——與其亂猜文字
+# 格式誤判，不如保守地只吃資料已經結構化、可信賴解析的部分。
+
+_CVE_ID_PATTERN = re.compile(r"CVE-\d{4}-\d+", re.IGNORECASE)
+
+# CVSS 分數轉四級風險，門檻採業界慣例（NVD 的 CVSS v3 定性分級一致）。
+_CVSS_CRITICAL_THRESHOLD = 9.0
+_CVSS_HIGH_THRESHOLD = 7.0
+_CVSS_MEDIUM_THRESHOLD = 4.0
+
+_RISK_FACTOR_TO_SEVERITY = {"critical": "critical", "high": "high", "medium": "medium", "low": "low"}
+
+_VULN_STATES = {"VULNERABLE", "LIKELY VULNERABLE"}
+
+
+def _score_to_severity(score: float | None) -> str | None:
+    if score is None:
+        return None
+    if score >= _CVSS_CRITICAL_THRESHOLD:
+        return "critical"
+    if score >= _CVSS_HIGH_THRESHOLD:
+        return "high"
+    if score >= _CVSS_MEDIUM_THRESHOLD:
+        return "medium"
+    return "low"
+
+
+def _parse_vuln_table(table_el: ET.Element) -> dict | None:
+    """
+    解析單一 <table> 節點，判斷它是不是一筆「已確認的弱點」（vulns.lua
+    的 state 是 VULNERABLE 或 LIKELY VULNERABLE），是的話回傳結構化資訊，
+    不是（例如這其實是 ids/scores 這種子表，或腳本判定 NOT VULNERABLE）
+    就回傳 None，讓呼叫端跳過。
+    """
+    direct_elems = {}
+    for elem in table_el.findall("elem"):
+        key = elem.get("key")
+        if key:
+            direct_elems[key] = (elem.text or "").strip()
+
+    state = direct_elems.get("state", "")
+    if state not in _VULN_STATES:
+        return None
+
+    # CVE 編號：外層 table 的 key 屬性通常就是 "CVE-xxxx-xxxx" 本身；
+    # 找不到的話再去 ids 子表（<table key="ids"><elem>CVE:CVE-xxxx-xxxx</elem>）撈。
+    cve_ids: list[str] = []
+    table_key = table_el.get("key", "")
+    if _CVE_ID_PATTERN.fullmatch(table_key):
+        cve_ids.append(table_key.upper())
+
+    ids_table = table_el.find('table[@key="ids"]')
+    if ids_table is not None:
+        for elem in ids_table.findall("elem"):
+            m = _CVE_ID_PATTERN.search(elem.text or "")
+            if m and m.group(0).upper() not in cve_ids:
+                cve_ids.append(m.group(0).upper())
+
+    # CVSS 分數：scores 子表可能同時有 CVSS2／CVSS3 兩個版本，取數值較高
+    # （較新版本的評分）的一個當代表分數。
+    score = None
+    scores_table = table_el.find('table[@key="scores"]')
+    if scores_table is not None:
+        for elem in scores_table.findall("elem"):
+            try:
+                v = float((elem.text or "").strip())
+            except ValueError:
+                continue
+            if score is None or v > score:
+                score = v
+
+    return {
+        "title": direct_elems.get("title", ""),
+        "state": state,
+        "cve_ids": cve_ids,
+        "score": score,
+        "risk_factor": direct_elems.get("risk_factor", ""),
+    }
+
+
+def _iter_script_elements(root: ET.Element):
+    """
+    走遍每個 host 的 script 輸出：host 層級（<hostscript>，例如
+    smb-vuln-* 這類不依附特定 port 的檢測）跟每個開放 port 底下的
+    <script>。刻意不處理 <prescript>/<postscript>（broadcast/探索類
+    腳本，例如 broadcast-ping），那些不是針對「這個目標」的弱點判定。
+
+    yield (ip_addr, port_label, script_element)，port_label 是
+    host 層級腳本時為 None。
+    """
+    for host in root.findall("host"):
+        addr_el = host.find("address")
+        ip_addr = addr_el.get("addr", "") if addr_el is not None else ""
+
+        hostscript = host.find("hostscript")
+        if hostscript is not None:
+            for script in hostscript.findall("script"):
+                yield ip_addr, None, script
+
+        ports_el = host.find("ports")
+        if ports_el is not None:
+            for port in ports_el.findall("port"):
+                port_id = port.get("portid", "")
+                protocol = port.get("protocol", "")
+                port_label = f"{protocol}/{port_id}" if port_id else None
+                for script in port.findall("script"):
+                    yield ip_addr, port_label, script
+
+
+def parse_nmap_vuln_findings(xml_file: str) -> list[dict]:
+    """
+    從 nmap XML 裡解析出 NSE vuln script 回報的已確認弱點，回傳統一格式的
+    findings。跟 parse_nmap_xml() 是互補而非取代——這支只處理 <script>
+    輸出，port 清單本身仍然由 parse_nmap_xml() 負責，run_scan() 會把兩邊
+    結果合併。
+
+    沒有跑 vuln 類 script、或跑了但沒有東西被判定 VULNERABLE 時，回傳
+    空 list，不影響既有行為。
+    """
+    tree = ET.parse(xml_file)
+    root = tree.getroot()
+
+    results = []
+    for ip_addr, port_label, script in _iter_script_elements(root):
+        script_id = script.get("id", "")
+        for table in script.findall(".//table"):
+            vuln = _parse_vuln_table(table)
+            if vuln is None:
+                continue
+
+            severity = (
+                _score_to_severity(vuln["score"])
+                or _RISK_FACTOR_TO_SEVERITY.get(vuln["risk_factor"].strip().lower())
+                or "medium"  # 已確認 VULNERABLE，但腳本沒附分數/risk_factor 時的保守預設
+            )
+
+            title = vuln["title"] or (", ".join(vuln["cve_ids"]) if vuln["cve_ids"] else script_id)
+            if port_label:
+                title = f"{title}（{port_label}）"
+
+            results.append(make_finding(
+                category="network",
+                source="nmap",
+                target=ip_addr,
+                severity=severity,
+                title=title,
+                detail={
+                    "script_id": script_id,
+                    "port": port_label,
+                    "cve_ids": vuln["cve_ids"],
+                    "cvss_score": vuln["score"],
+                    "risk_factor": vuln["risk_factor"],
+                    "state": vuln["state"],
+                },
+            ))
+
+    return results
+
+
 def run_scan(
     ip: str,
     ports: str | None = None,
@@ -292,6 +464,10 @@ def run_scan(
         return []
 
     findings = parse_nmap_xml(xml_file)  # 若 XML 損毀，ET.ParseError 交給呼叫端處理
+    # 額外解析 NSE vuln script 的輸出（見 parse_nmap_vuln_findings() 說明）。
+    # 沒有跑 vuln 類 script、或跑了但沒有東西被判定 VULNERABLE 時是空 list，
+    # 不影響既有的 port 清單行為。
+    findings += parse_nmap_vuln_findings(xml_file)
     json_file = save_findings_json(findings, base_name)
     print_file_status("JSON", json_file)
     print_findings(findings, empty_message="No open ports found in XML.")
