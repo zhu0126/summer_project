@@ -90,6 +90,55 @@ RISK_FACTOR_ONLY_XML = """<table key="CVE-2021-1111">
 rf_only = nmap_scan._parse_vuln_table(ET.fromstring(RISK_FACTOR_ONLY_XML))
 check("沒有 CVSS 分數時 risk_factor 欄位有被讀到", rf_only["risk_factor"] == "Critical" and rf_only["score"] is None)
 
+# --- 以下兩組對應「選了 vuln 類 script，報告卻永遠不出現 Critical」的兩個成因 ---
+
+# 成因 1：vulns.lua 的 state 還有帶括號的變體（VULNERABLE (Exploitable) /
+# VULNERABLE (DoS)），原本用完全相等比對，這些風險最高的判定整筆被丟掉。
+EXPLOITABLE_XML = """<table key="CVE-2019-0708">
+  <elem key="title">BlueKeep RDP RCE</elem>
+  <elem key="state">VULNERABLE (Exploitable)</elem>
+  <table key="scores"><elem key="CVSSv2">10.0</elem></table>
+</table>"""
+exploitable = nmap_scan._parse_vuln_table(ET.fromstring(EXPLOITABLE_XML))
+check("VULNERABLE (Exploitable) 有被視為已確認弱點",
+      exploitable is not None and exploitable["score"] == 10.0)
+
+DOS_XML = """<table key="CVE-2018-0001">
+  <elem key="title">Some DoS</elem>
+  <elem key="state">VULNERABLE (DoS)</elem>
+</table>"""
+check("VULNERABLE (DoS) 有被視為已確認弱點",
+      nmap_scan._parse_vuln_table(ET.fromstring(DOS_XML)) is not None)
+
+UNKNOWN_STATE_XML = """<table key="CVE-2018-0002">
+  <elem key="title">Could not test</elem>
+  <elem key="state">UNKNOWN (unable to test)</elem>
+</table>"""
+check("UNKNOWN (unable to test) 仍然不算弱點",
+      nmap_scan._parse_vuln_table(ET.fromstring(UNKNOWN_STATE_XML)) is None)
+check("NOT VULNERABLE 不會被前綴比對誤中",
+      nmap_scan._parse_vuln_table(ET.fromstring(NOT_VULN_XML)) is None)
+
+# 成因 2：很多 nmap 腳本的 scores 欄位不是乾淨的數字，而是
+# "10.0 (HIGH) (AV:N/...)" 這種格式，原本 float() 直接失敗、分數被當成沒有，
+# 於是退回 risk_factor（內建腳本最高只寫到 High）→ critical 永遠出不來。
+check("scores 帶定性等級與向量字串時仍解得出分數",
+      nmap_scan._parse_score("10.0 (HIGH) (AV:N/AC:L/Au:N/C:C/I:C/A:C)") == 10.0)
+check("乾淨數字照常解析", nmap_scan._parse_score("9.8") == 9.8)
+check("整數分數照常解析", nmap_scan._parse_score("10") == 10.0)
+check("完全非數字回 None", nmap_scan._parse_score("N/A") is None)
+
+MESSY_SCORE_XML = """<table key="CVE-2009-3103">
+  <elem key="title">SMBv2 negotiation RCE</elem>
+  <elem key="state">VULNERABLE</elem>
+  <table key="scores">
+    <elem key="CVSSv2">10.0 (HIGH) (AV:N/AC:L/Au:N/C:C/I:C/A:C)</elem>
+  </table>
+</table>"""
+messy = nmap_scan._parse_vuln_table(ET.fromstring(MESSY_SCORE_XML))
+check("實務格式的 scores 解出 10.0（不再退回 risk_factor）", messy["score"] == 10.0)
+check("10.0 換算成 critical", nmap_scan._score_to_severity(messy["score"]) == "critical")
+
 print()
 print("==== nmap_scan：整份 XML 走查（parse_nmap_vuln_findings）====")
 

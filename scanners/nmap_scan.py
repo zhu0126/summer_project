@@ -254,7 +254,39 @@ _CVSS_MEDIUM_THRESHOLD = 4.0
 
 _RISK_FACTOR_TO_SEVERITY = {"critical": "critical", "high": "high", "medium": "medium", "low": "low"}
 
-_VULN_STATES = {"VULNERABLE", "LIKELY VULNERABLE"}
+# vulns.lua 的 state 字串不是只有 "VULNERABLE" 一種，實際輸出還包含帶括號
+# 補充說明的版本（見 nmap 官方 vulns.lua 的 STATE_MSG 對照表）：
+#     VULNERABLE / VULNERABLE (Exploitable) / VULNERABLE (DoS)
+#     LIKELY VULNERABLE / NOT VULNERABLE / UNKNOWN (unable to test)
+# 原本用集合做「完全相等」比對，只認得沒有括號的那兩種，結果
+# "VULNERABLE (Exploitable)" 這種**風險最高**的判定反而整筆被丟掉，連
+# finding 都不會產生。改用前綴比對涵蓋所有變體；"NOT VULNERABLE" 不會
+# 誤中，因為它是以 "NOT " 開頭。
+_VULN_STATE_PREFIXES = ("VULNERABLE", "LIKELY VULNERABLE")
+
+# CVSS 分數欄位的開頭數字。nmap 各腳本寫進 scores 子表的格式並不統一，
+# 除了乾淨的 "9.8" 之外，很多腳本（例如 smb-vuln-cve2009-3103）寫的是
+#     "10.0 (HIGH) (AV:N/AC:L/Au:N/C:C/I:C/A:C)"
+# 這種「分數 + 定性等級 + 向量字串」的組合。直接 float() 會 ValueError，
+# 分數就被當成沒有，最後只能退回 risk_factor——而 nmap 內建腳本的
+# risk_factor 幾乎都只寫到 "High"，於是 CVSS 10.0 的弱點永遠顯示成 HIGH，
+# critical 這一級實際上不可能出現。這裡只取開頭的數值部分。
+_LEADING_SCORE_PATTERN = re.compile(r"^\s*(\d+(?:\.\d+)?)")
+
+
+def _is_vulnerable_state(state: str) -> bool:
+    return state.startswith(_VULN_STATE_PREFIXES)
+
+
+def _parse_score(text: str) -> float | None:
+    """從 scores 子表的一個 elem 文字裡取出 CVSS 數值，取不到回 None。"""
+    m = _LEADING_SCORE_PATTERN.match(text or "")
+    if m is None:
+        return None
+    try:
+        return float(m.group(1))
+    except ValueError:  # 理論上不會發生（regex 已保證格式），防禦性處理
+        return None
 
 
 def _score_to_severity(score: float | None) -> str | None:
@@ -283,7 +315,7 @@ def _parse_vuln_table(table_el: ET.Element) -> dict | None:
             direct_elems[key] = (elem.text or "").strip()
 
     state = direct_elems.get("state", "")
-    if state not in _VULN_STATES:
+    if not _is_vulnerable_state(state):
         return None
 
     # CVE 編號：外層 table 的 key 屬性通常就是 "CVE-xxxx-xxxx" 本身；
@@ -301,14 +333,14 @@ def _parse_vuln_table(table_el: ET.Element) -> dict | None:
                 cve_ids.append(m.group(0).upper())
 
     # CVSS 分數：scores 子表可能同時有 CVSS2／CVSS3 兩個版本，取數值較高
-    # （較新版本的評分）的一個當代表分數。
+    # （較新版本的評分）的一個當代表分數。各腳本的寫法不一致，交給
+    # _parse_score() 處理（見該函式說明）。
     score = None
     scores_table = table_el.find('table[@key="scores"]')
     if scores_table is not None:
         for elem in scores_table.findall("elem"):
-            try:
-                v = float((elem.text or "").strip())
-            except ValueError:
+            v = _parse_score(elem.text or "")
+            if v is None:
                 continue
             if score is None or v > score:
                 score = v
