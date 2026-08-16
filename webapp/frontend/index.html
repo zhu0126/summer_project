@@ -502,7 +502,7 @@
   .review-card .review-title { font-size: 13.5px; }
   .review-card .review-body { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); font-size: 12.5px; }
   .review-card .candidate-group { margin-bottom: 8px; }
-  .review-card .candidate-group .cg-label { font-size: 11px; color: var(--text-dim); text-transform: uppercase; margin-bottom: 4px; }
+  .review-card .candidate-group .cg-label { font-size: 11px; color: var(--text-dim); text-transform: uppercase; margin-bottom: 4px; text-align: left; }
   .review-card .candidate-item {
     display: flex; align-items: center; flex-wrap: wrap; gap: 6px;
     color: var(--text-dim); margin-bottom: 4px;
@@ -517,8 +517,9 @@
   .adopt-btn:hover { border-color: var(--accent); background: rgba(94, 184, 255, 0.08); }
   .candidate-confirmed { margin-left: auto; color: var(--ok); font-size: 11px; font-weight: 600; flex-shrink: 0; }
 
+  .card-more-row { display: flex; justify-content: flex-end; margin-top: 6px; }
   .expand-candidates-btn {
-    display: block; background: none; border: none; color: var(--accent); font-size: 11.5px;
+    display: inline-block; background: none; border: none; color: var(--accent); font-size: 11.5px;
     cursor: pointer; font-family: inherit; padding: 4px 0; text-decoration: underline;
   }
 
@@ -1179,11 +1180,11 @@ function adoptCandidate(findingId, group, id, buttonEl) {
   }
 }
 
-// 預設每組只顯示最相關（Top N）的候選，其餘收在「查看更多候選條文」
-// 展開連結後面——候選清單已經是依相關性排序，優先讓人看到最有可能
-// 相關的那一筆，而不是一次塞 5 條要人逐一篩選。
+// 預設每組只顯示最相關（Top 1）的候選，其餘收在整張卡片右下角統一的
+// 「查看更多」連結後面——候選清單已經是依相關性排序，優先讓人看到最
+// 有可能相關的那一筆，而不是一次塞好幾條要人逐一篩選。
 function renderCandidateGroup(label, items, idField, bodyFn, opts) {
-  if (!items || items.length === 0) return "";
+  if (!items || items.length === 0) return { visibleHtml: "", hiddenHtml: "", hiddenCount: 0 };
   opts = opts || {};
   const limit = opts.limit || items.length;
   const visible = items.slice(0, limit);
@@ -1202,19 +1203,12 @@ function renderCandidateGroup(label, items, idField, bodyFn, opts) {
     return `<div class="candidate-item"><span class="cid">${escapeHtml(id)}</span> ${escapeHtml(body)}${confidenceBadge(c.score)}${adoptControl}</div>`;
   };
 
-  const visibleHtml = visible.map(renderItem).join("");
-  let expandHtml = "";
-  if (hidden.length > 0) {
-    const hiddenId = `hidden-${escapeHtml(opts.groupId || `${opts.findingId}-${opts.group}`)}`;
-    expandHtml = `
-      <button type="button" class="expand-candidates-btn" data-target="${hiddenId}"
-        data-more-label="查看更多候選條文 (+${hidden.length})" data-less-label="收合候選條文 ▲">
-        查看更多候選條文 (+${hidden.length})
-      </button>
-      <div class="candidate-hidden" id="${hiddenId}" hidden>${hidden.map(renderItem).join("")}</div>`;
-  }
+  const visibleHtml = `<div class="candidate-group"><div class="cg-label">${escapeHtml(label)}</div>${visible.map(renderItem).join("")}</div>`;
+  const hiddenHtml = hidden.length > 0
+    ? `<div class="candidate-group"><div class="cg-label">${escapeHtml(label)}（其餘 ${hidden.length} 筆）</div>${hidden.map(renderItem).join("")}</div>`
+    : "";
 
-  return `<div class="candidate-group"><div class="cg-label">${escapeHtml(label)}</div>${visibleHtml}${expandHtml}</div>`;
+  return { visibleHtml, hiddenHtml, hiddenCount: hidden.length };
 }
 
 function renderCompliance(findings, processRequirements) {
@@ -1268,14 +1262,30 @@ function renderCompliance(findings, processRequirements) {
       const s = f.rag_suggestions || {};
       const card = document.createElement("details");
       card.className = "review-card";
-      const candidatesHtml = [
+
+      // 每組（CWE/IEC/CRA）預設只取 Top 1，其餘收合起來，統一由卡片
+      // 右下角單一的「查看更多」連結展開，而不是每組各自一顆按鈕。
+      const groups = [
         renderCandidateGroup("CWE 候選", s.cwe, "cwe_id", c => c.name || "",
           { findingId: f.finding_id, group: "cwe", limit: 1 }),
         renderCandidateGroup("IEC 62443-4-2 候選", s.iec, "article_no", c => c.title || "",
-          { findingId: f.finding_id, group: "iec" }),
+          { findingId: f.finding_id, group: "iec", limit: 1 }),
         renderCandidateGroup("CRA 候選", s.cra, "article_no", c => truncateText(c.text_zh || c.text || c.title || "", 200),
           { findingId: f.finding_id, group: "cra", limit: 1 }),
-      ].join("") || `<div class="empty-note">語意檢索目前沒有回傳候選（可能是知識庫尚未建立或連線失敗）。</div>`;
+      ];
+      const candidatesHtml = groups.map(g => g.visibleHtml).join("")
+        || `<div class="empty-note">語意檢索目前沒有回傳候選（可能是知識庫尚未建立或連線失敗）。</div>`;
+      const hiddenCount = groups.reduce((sum, g) => sum + g.hiddenCount, 0);
+      const hiddenId = `hidden-${escapeHtml(f.finding_id)}`;
+      const hiddenHtml = hiddenCount > 0
+        ? `<div class="candidate-hidden" id="${hiddenId}" hidden>${groups.map(g => g.hiddenHtml).join("")}</div>
+           <div class="card-more-row">
+             <button type="button" class="expand-candidates-btn" data-target="${hiddenId}"
+               data-more-label="查看更多 (+${hiddenCount}) ▾" data-less-label="收合 ▴">
+               查看更多 (+${hiddenCount}) ▾
+             </button>
+           </div>`
+        : "";
 
       const llmHtml = f.llm_advice ? `
         <div class="llm-advice">
@@ -1291,6 +1301,7 @@ function renderCompliance(findings, processRequirements) {
         <div class="review-body">
           ${candidatesHtml}
           ${llmHtml}
+          ${hiddenHtml}
         </div>
       `;
       reviewSection.appendChild(card);
