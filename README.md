@@ -81,10 +81,10 @@ CWE/CRA 資料庫需要一次性建立索引：
 
 ```bash
 # CWE 知識庫
-python -m cwe_kb.fetch_cwe
+python3 -m cwe_kb.fetch_cwe
 
 # CRA 知識庫
-python -m cra_kb.fetch_cra
+python3 -m cra_kb.fetch_cra
 ```
 
 這些指令會從 MITRE（CWE）及 EUR-Lex（CRA）下載最新資料、建立 Qdrant collection。
@@ -95,15 +95,15 @@ IEC 62443 是**付費標準**，沒有合法的公開全文來源，因此 `fetc
 **不做任何下載**，一律要求你指定自己授權取得的 PDF：
 
 ```bash
-python -m iec_kb.fetch_iec --pdf /path/to/iec62443-4-2.pdf --part 4-2 --verify
+python3 -m iec_kb.fetch_iec --pdf /path/to/iec62443-4-2.pdf --part 4-2 --verify
 ```
 
 ```bash
-python -m iec_kb.fetch_iec --pdf /path/to/iec62443-4-1.pdf --part 4-1 --verify
+python3 -m iec_kb.fetch_iec --pdf /path/to/iec62443-4-1.pdf --part 4-1 --verify
 ```
 
 ```bash
-python -m iec_kb.build_iec_index
+python3 -m iec_kb.build_iec_index
 ```
 
 `--part` 在檔名含 `62443-4-2` 之類字樣時可省略。`--verify` 會核對條目數量
@@ -138,13 +138,13 @@ GEMINI_MODEL=gemini-2.5-flash
 
 ```bash
 # 基礎用法
-python -m core.project --ip 192.168.1.1 --report
+python3 -m core.project --ip 192.168.1.1 --report
 
 # 加入 LLM 研判建議
-python -m core.project --ip 192.168.1.1 --report --llm
+python3 -m core.project --ip 192.168.1.1 --report --llm
 
 # 完整示例：指定操作者、PDF 標題等
-python -m core.project \
+python3 -m core.project \
   --ip 192.168.1.1 \
   --report \
   --llm \
@@ -156,7 +156,7 @@ python -m core.project \
 #### 固件掃描
 
 ```bash
-python -m core.project \
+python3 -m core.project \
   --firmware firmware.bin \
   --extract \
   --report
@@ -166,7 +166,7 @@ python -m core.project \
 
 ```bash
 # ZAP daemon 需另行啟動（或加 --zap-auto-start）
-python -m core.project \
+python3 -m core.project \
   --url http://target:8080 \
   --report \
   --zap-auto-start
@@ -175,7 +175,7 @@ python -m core.project \
 #### 組合掃描
 
 ```bash
-python -m core.project \
+python3 -m core.project \
   --ip 192.168.1.0/24 \
   --firmware firmware.bin \
   --url http://target:8080 \
@@ -185,7 +185,7 @@ python -m core.project \
 #### nmap 進階選項
 
 ```bash
-python -m core.project \
+python3 -m core.project \
   --ip 192.168.1.1 \
   --ports 1-1000 \
   --timing T4 \
@@ -200,7 +200,7 @@ python -m core.project \
 
 ```bash
 cd webapp/backend
-python -m uvicorn main:app --reload
+python3 -m uvicorn main:app --reload
 ```
 
 在瀏覽器開啟 `http://localhost:8000` — 三種掃描工具為收合面板，點擊標題展開參數區、配置後點「執行掃描」。
@@ -214,10 +214,10 @@ python -m uvicorn main:app --reload
 
 ```bash
 # 不用 LLM
-python -m core.report output/combined_20260812_xxxxx.json
+python3 -m core.report output/combined_20260812_xxxxx.json
 
 # 加上 LLM 研判
-python -m core.report output/combined_20260812_xxxxx.json --llm
+python3 -m core.report output/combined_20260812_xxxxx.json --llm
 ```
 
 ## 目錄結構
@@ -294,10 +294,10 @@ python -m core.report output/combined_20260812_xxxxx.json --llm
 
 ```bash
 # 離線單元測試（LLM 層、context 組裝）
-python test/test_llm_advisor.py
+python3 test/test_llm_advisor.py
 
 # 手動測試 LLM 引用驗證
-python -m core.llm_advisor
+python3 -m core.llm_advisor
 ```
 
 所有測試無外部依賴（不需 Qdrant、不需 API 金鑰）。
@@ -337,14 +337,14 @@ python -m core.llm_advisor
 
 **解決**：
 ```bash
-python -m cwe_kb.fetch_cwe  # 重新建立索引
+python3 -m cwe_kb.fetch_cwe  # 重新建立索引
 ```
 
 ### LLM 段落未出現
 
 檢查：
 ```bash
-python -c "from core.llm_advisor import is_available; print(is_available())"
+python3 -c "from core.llm_advisor import is_available; print(is_available())"
 ```
 
 結果為 `False` 的話：
