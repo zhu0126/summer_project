@@ -213,50 +213,55 @@ def _finding_signature(finding: dict) -> str:
     return f"{finding.get('category', '')}|{finding.get('source', '')}|{finding.get('title', '')}"
 
 
-def _load_cra_remediation_cache() -> dict:
-    if not CRA_REMEDIATION_CACHE_PATH.is_file():
+def _load_json_cache(path: Path) -> dict:
+    if not path.is_file():
         return {}
     try:
-        return json.loads(CRA_REMEDIATION_CACHE_PATH.read_text(encoding="utf-8"))
+        return json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as e:
-        print(f"[llm_advisor] 警告：CRA 修補建議快取讀取失敗，視為空快取（{e}）")
+        print(f"[llm_advisor] 警告：修補建議快取讀取失敗，視為空快取（{path.name}：{e}）")
         return {}
 
 
-def _save_cra_remediation_cache(cache: dict) -> None:
+def _save_json_cache(path: Path, cache: dict) -> None:
     try:
-        CRA_REMEDIATION_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
-        CRA_REMEDIATION_CACHE_PATH.write_text(
-            json.dumps(cache, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(cache, ensure_ascii=False, indent=2), encoding="utf-8")
     except OSError as e:
         # 寫檔失敗（例如唯讀檔案系統）不該讓這次已經拿到的結果作廢，
         # 只是下次沒辦法吃到快取、要重新呼叫一次 Claude。
-        print(f"[llm_advisor] 警告：CRA 修補建議快取寫入失敗，本次結果不會保留（{e}）")
+        print(f"[llm_advisor] 警告：修補建議快取寫入失敗，本次結果不會保留（{path.name}：{e}）")
 
 
-def derive_cra_remediation(finding: dict, article_no: str, title: str, text: str) -> str | None:
+def _load_cra_remediation_cache() -> dict:
+    return _load_json_cache(CRA_REMEDIATION_CACHE_PATH)
+
+
+def _save_cra_remediation_cache(cache: dict) -> None:
+    _save_json_cache(CRA_REMEDIATION_CACHE_PATH, cache)
+
+
+def _derive_kb_remediation(
+    finding: dict,
+    ref_id: str,
+    load_cache_fn,
+    save_cache_fn,
+    system_instruction: str,
+    reference_block: str,
+) -> str | None:
     """
-    把「一筆 finding」+「語意檢索配對到的 CRA 條文全文」一起交給 Claude，
-    產出一句具體可執行的繁體中文修補建議——取代直接顯示條文 title
-    （常常只是像 "Reporting obligations" 這種抽象標題）或整段法規原文的
-    paraphrase（讀完還是不知道「所以我該做什麼」）。
-
-    回傳 None 代表這條路徑不可用（沒金鑰/沒套件/呼叫失敗），呼叫端應該
-    退回顯示條文原文（text）或 title，不能讓整筆候選因此消失——跟
-    llm_advisor 其他函式一致的降級原則。
+    共用的「finding + 單一知識庫候選」→ 一句話修補建議產生邏輯，CWE/IEC/CRA
+    三個 derive_*_remediation() 都是這支函式套不同的 system prompt 跟快取檔案。
+    每個知識庫獨立一份快取檔（cache_key 只含 ref_id + finding 特徵），不會
+    因為共用這支函式就互相污染彼此的快取內容。
     """
-    if not article_no:
+    if not ref_id:
         return None
 
-    cache = _load_cra_remediation_cache()
-    cache_key = f"{article_no}::{_finding_signature(finding)}"
+    cache = load_cache_fn()
+    cache_key = f"{ref_id}::{_finding_signature(finding)}"
     if cache_key in cache:
         return cache[cache_key]
-
-    truncated_article = (text or "").strip()
-    if len(truncated_article) > CRA_REMEDIATION_INPUT_MAX_CHARS:
-        truncated_article = truncated_article[:CRA_REMEDIATION_INPUT_MAX_CHARS].rstrip() + "……"
 
     detail = finding.get("detail") or {}
     detail_lines = "\n".join(
@@ -270,20 +275,129 @@ def derive_cra_remediation(finding: dict, article_no: str, title: str, text: str
 - Target: {finding.get('target', '')}
 {detail_lines}
 
-# Cited CRA Article (matched by semantic search, may be a loose match)
-
-{article_no} — {title}
-
-{truncated_article}
+{reference_block}
 """
-    answer = ask_llm(CRA_REMEDIATION_SYSTEM_INSTRUCTION, prompt)
+    answer = ask_llm(system_instruction, prompt)
     if answer is None:
         return None
 
     result = answer.strip()
     cache[cache_key] = result
-    _save_cra_remediation_cache(cache)
+    save_cache_fn(cache)
     return result
+
+
+def derive_cra_remediation(finding: dict, article_no: str, title: str, text: str) -> str | None:
+    """
+    把「一筆 finding」+「語意檢索配對到的 CRA 條文全文」一起交給 Claude，
+    產出一句具體可執行的繁體中文修補建議——取代直接顯示條文 title
+    （常常只是像 "Reporting obligations" 這種抽象標題）或整段法規原文的
+    paraphrase（讀完還是不知道「所以我該做什麼」）。
+
+    回傳 None 代表這條路徑不可用（沒金鑰/沒套件/呼叫失敗），呼叫端應該
+    退回顯示條文原文（text）或 title，不能讓整筆候選因此消失——跟
+    llm_advisor 其他函式一致的降級原則。
+    """
+    truncated_article = (text or "").strip()
+    if len(truncated_article) > CRA_REMEDIATION_INPUT_MAX_CHARS:
+        truncated_article = truncated_article[:CRA_REMEDIATION_INPUT_MAX_CHARS].rstrip() + "……"
+
+    reference_block = f"""# Cited CRA Article (matched by semantic search, may be a loose match)
+
+{article_no} — {title}
+
+{truncated_article}
+"""
+    return _derive_kb_remediation(
+        finding, article_no,
+        _load_cra_remediation_cache, _save_cra_remediation_cache,
+        CRA_REMEDIATION_SYSTEM_INSTRUCTION, reference_block,
+    )
+
+
+# CWE 候選＋finding 一起讀，產出一句話修補建議，跟 derive_cra_remediation
+# 同一套設計：CWE 的 description 也是描述一整類弱點的通用文字（例如
+# CWE-319「明碼傳輸敏感資訊」），不是針對這筆 finding 寫的，直接顯示
+# description 一樣看不出「所以我該做什麼」。
+CWE_REMEDIATION_CACHE_PATH = (
+    Path(__file__).resolve().parent.parent / "cwe_kb" / "cwe_data" / "cwe_remediation_cache.json"
+)
+
+CWE_REMEDIATION_SYSTEM_INSTRUCTION = """You are helping a product security engineer understand, for ONE specific scan finding, what a cited CWE (Common Weakness Enumeration) entry means they should actually do about it.
+
+You are given: (1) one scan finding (title, category, and technical detail), and (2) a CWE entry (ID, name, and description) that semantic search matched to this finding. The CWE description describes a general class of weakness — it applies to many kinds of products, not just this one — so do not just paraphrase it in the abstract.
+
+Rules:
+1. Write EXACTLY ONE sentence in Traditional Chinese (zh-TW), at most 80 characters, telling the reader concretely how to remediate or address THIS finding, grounded in what the cited CWE describes.
+2. Do not restate the finding's title verbatim, and do not quote the CWE description. Translate the weakness into a concrete action for this specific finding.
+3. Semantic search is not guaranteed to be accurate — if the CWE's connection to this finding looks weak or indirect, phrase the sentence as something to verify rather than a certain conclusion.
+4. Output the sentence only. No markdown, no bullet points, no headings, no leading label, no trailing explanation."""
+
+
+def _load_cwe_remediation_cache() -> dict:
+    return _load_json_cache(CWE_REMEDIATION_CACHE_PATH)
+
+
+def _save_cwe_remediation_cache(cache: dict) -> None:
+    _save_json_cache(CWE_REMEDIATION_CACHE_PATH, cache)
+
+
+def derive_cwe_remediation(finding: dict, cwe_id: str, name: str, description: str = "") -> str | None:
+    """跟 derive_cra_remediation 同一套邏輯，套用在 CWE 候選上。"""
+    reference_block = f"""# Cited CWE Entry (matched by semantic search, may be a loose match)
+
+{cwe_id} — {name}
+
+{description}
+"""
+    return _derive_kb_remediation(
+        finding, cwe_id,
+        _load_cwe_remediation_cache, _save_cwe_remediation_cache,
+        CWE_REMEDIATION_SYSTEM_INSTRUCTION, reference_block,
+    )
+
+
+# IEC 62443-4-2 候選＋finding 一起讀，產出一句話修補建議，同一套設計。
+IEC_REMEDIATION_CACHE_PATH = (
+    Path(__file__).resolve().parent.parent / "iec_kb" / "iec_data" / "iec_remediation_cache.json"
+)
+
+IEC_REMEDIATION_SYSTEM_INSTRUCTION = """You are helping a product security engineer understand, for ONE specific scan finding, what a cited IEC 62443-4-2 component technical requirement means they should actually do about it.
+
+You are given: (1) one scan finding (title, category, and technical detail), and (2) an IEC 62443-4-2 requirement (clause ID, title, and text) that semantic search matched to this finding. The requirement text is general — it applies to all kinds of components, not just this one — so do not just paraphrase it in the abstract.
+
+Rules:
+1. Write EXACTLY ONE sentence in Traditional Chinese (zh-TW), at most 80 characters, telling the reader concretely how to remediate or address THIS finding, grounded in what the cited requirement demands.
+2. Do not restate the finding's title verbatim, and do not quote the requirement text. Translate the requirement into a concrete action for this specific finding.
+3. Semantic search is not guaranteed to be accurate — if the requirement's connection to this finding looks weak or indirect, phrase the sentence as something to verify rather than a certain conclusion.
+4. Output the sentence only. No markdown, no bullet points, no headings, no leading label, no trailing explanation."""
+
+
+def _load_iec_remediation_cache() -> dict:
+    return _load_json_cache(IEC_REMEDIATION_CACHE_PATH)
+
+
+def _save_iec_remediation_cache(cache: dict) -> None:
+    _save_json_cache(IEC_REMEDIATION_CACHE_PATH, cache)
+
+
+def derive_iec_remediation(finding: dict, article_no: str, title: str, group: str = "", text: str = "") -> str | None:
+    """跟 derive_cra_remediation 同一套邏輯，套用在 IEC 62443-4-2 候選上。"""
+    truncated_text = (text or "").strip()
+    if len(truncated_text) > CRA_REMEDIATION_INPUT_MAX_CHARS:
+        truncated_text = truncated_text[:CRA_REMEDIATION_INPUT_MAX_CHARS].rstrip() + "……"
+
+    reference_block = f"""# Cited IEC 62443-4-2 Requirement (matched by semantic search, may be a loose match)
+
+{article_no} — {title}{f"（{group}）" if group else ""}
+
+{truncated_text}
+"""
+    return _derive_kb_remediation(
+        finding, article_no,
+        _load_iec_remediation_cache, _save_iec_remediation_cache,
+        IEC_REMEDIATION_SYSTEM_INSTRUCTION, reference_block,
+    )
 
 
 PENTEST_OBJECTIVE_SYSTEM_INSTRUCTION = """You are helping plan an AUTHORIZED penetration test of an IoT product, on targets the operator is explicitly permitted to test. You are given one scan finding and, optionally, a security requirement (from IEC 62443-4-2 or the EU CRA) that the finding may relate to.

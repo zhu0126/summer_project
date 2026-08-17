@@ -55,41 +55,30 @@
 ## 待複核項目（規則未涵蓋，附語意檢索候選建議）
 
 以下項目沒有對應到既有規則，系統無法自動判定風險等級，僅附上語意檢索
-找到的候選分類/條文供參考。**這些候選建議未經驗證，可能不準確，不能
+找到的信心最高候選（CWE／IEC 62443-4-2／CRA 各 1 筆），並由 AI 針對這筆
+發現產出一句話修補建議供參考。**這些候選建議未經驗證，可能不準確，不能
 直接當作正式判讀結果引用，請由人工逐項確認。**
 
 {% for item in review_items %}
-### {{ item.title }}（{{ item.target }}）
+弱點
+{{ item.title }}（{{ item.target }}）
 
-{% if item.rag_suggestions and item.rag_suggestions.cwe %}
+{% set cwe = item.rag_suggestions.cwe[0] if item.rag_suggestions and item.rag_suggestions.cwe else None %}
+CVE
+{{ (cwe.text_zh or cwe.name) if cwe else "（語意檢索沒有找到相關候選）" }}
+{{ cwe.cwe_id if cwe else "（無）" }}
 
-CWE 候選：
-{% for c in item.rag_suggestions.cwe %}
-- `{{ c.cwe_id }}` {{ c.name }}{% if c.score is not none %}（信心：{{ c.score | confidence_label }}）{% endif %}
+{% set iec = item.rag_suggestions.iec[0] if item.rag_suggestions and item.rag_suggestions.iec else None %}
+IEC 62443-4-2
+{{ (iec.text_zh or iec.title) if iec else "（語意檢索沒有找到相關候選）" }}
+{{ iec.article_no if iec else "（無）" }}
 
-{% endfor %}
-{% endif %}
-{% if item.rag_suggestions and item.rag_suggestions.iec %}
+{% set cra = item.rag_suggestions.cra[0] if item.rag_suggestions and item.rag_suggestions.cra else None %}
+CRA
+{{ (cra.text_zh or cra.text or cra.title) if cra else "（語意檢索沒有找到相關候選）" }}
+{{ cra.article_no if cra else "（無）" }}
 
-IEC 62443-4-2 候選（元件技術要求）：
-{% for c in item.rag_suggestions.iec %}
-- {{ c.article_no }} {{ c.title }}{% if c.group %}｜{{ c.group }}{% endif %}{% if c.score is not none %}（信心：{{ c.score | confidence_label }}）{% endif %}
-
-{% endfor %}
-{% endif %}
-{% if item.rag_suggestions and item.rag_suggestions.cra %}
-
-CRA 候選：
-{% for c in item.rag_suggestions.cra %}
-- {{ c.article_no }}：{{ (c.text_zh or c.text or c.title or "") | truncate(200) }}{% if c.score is not none %}（信心：{{ c.score | confidence_label }}）{% endif %}
-
-{% endfor %}
-{% endif %}
-{% if not item.rag_suggestions or (not item.rag_suggestions.cwe and not item.rag_suggestions.iec and not item.rag_suggestions.cra) %}
-（語意檢索目前沒有回傳候選，可能是知識庫尚未建立或連線失敗）
-{% endif %}
 {% if item.llm_advice %}
-
 **AI 研判建議**（模型：{{ item.llm_advice.model }}，僅依據上方候選資料產生）
 
 {{ item.llm_advice.answer }}
@@ -100,6 +89,8 @@ CRA 候選：
 > {{ item.llm_advice.unsupported_citations | join("、") }}
 {% endif %}
 {% endif %}
+
+---
 
 {% endfor %}
 {% endif %}

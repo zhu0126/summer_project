@@ -320,10 +320,19 @@ def _parse_vuln_table(table_el: ET.Element) -> dict | None:
 
     # CVE 編號：外層 table 的 key 屬性通常就是 "CVE-xxxx-xxxx" 本身；
     # 找不到的話再去 ids 子表（<table key="ids"><elem>CVE:CVE-xxxx-xxxx</elem>）撈。
+    # 實際 nmap 輸出還可能在主 table 底下直接有 <elem>CVE:CVE-xxxx-xxxx</elem>（無 key）。
     cve_ids: list[str] = []
     table_key = table_el.get("key", "")
     if _CVE_ID_PATTERN.fullmatch(table_key):
         cve_ids.append(table_key.upper())
+
+    # 直接在 table 底下的 elem（無 key 屬性）裡搜 CVE 編號
+    for elem in table_el.findall("elem"):
+        if elem.get("key") is not None:  # 跳過有 key 屬性的（已經在 direct_elems 了）
+            continue
+        m = _CVE_ID_PATTERN.search(elem.text or "")
+        if m and m.group(0).upper() not in cve_ids:
+            cve_ids.append(m.group(0).upper())
 
     ids_table = table_el.find('table[@key="ids"]')
     if ids_table is not None:
@@ -404,11 +413,18 @@ def parse_nmap_vuln_findings(xml_file: str) -> list[dict]:
             if vuln is None:
                 continue
 
-            severity = (
-                _score_to_severity(vuln["score"])
-                or _RISK_FACTOR_TO_SEVERITY.get(vuln["risk_factor"].strip().lower())
-                or "medium"  # 已確認 VULNERABLE，但腳本沒附分數/risk_factor 時的保守預設
-            )
+            # 判定風險等級優先順序：CVSS 分數 > risk_factor > state 內容 > 保守預設
+            severity = _score_to_severity(vuln["score"])
+            if severity is None:
+                severity = _RISK_FACTOR_TO_SEVERITY.get(vuln["risk_factor"].strip().lower())
+            if severity is None:
+                # 即使沒有分數/risk_factor，"(Exploitable)" 也表示已可利用，判為 critical
+                if "(Exploitable)" in vuln["state"]:
+                    severity = "critical"
+                elif "(DoS)" in vuln["state"]:
+                    severity = "high"
+                else:
+                    severity = "medium"  # 已確認 VULNERABLE，但沒有更多資訊時的保守預設
 
             title = vuln["title"] or (", ".join(vuln["cve_ids"]) if vuln["cve_ids"] else script_id)
             if port_label:

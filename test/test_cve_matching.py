@@ -110,6 +110,19 @@ DOS_XML = """<table key="CVE-2018-0001">
 check("VULNERABLE (DoS) 有被視為已確認弱點",
       nmap_scan._parse_vuln_table(ET.fromstring(DOS_XML)) is not None)
 
+# 成因 3（實務發現）：nmap 實際輸出有時不用 <table key="ids">，而是直接在
+# main table 底下放 <elem>CVE:CVE-xxxx</elem>（無 key 屬性），例如
+# ftp-vsftpd-backdoor 這類內建腳本。CVE 編號要能從這裡撈出來。
+DIRECT_ELEM_CVE_XML = """<table key="CVE-2011-2523">
+  <elem key="state">VULNERABLE (Exploitable)</elem>
+  <elem>CVE:CVE-2011-2523</elem>
+  <elem>https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2011-2523</elem>
+</table>"""
+direct_cve = nmap_scan._parse_vuln_table(ET.fromstring(DIRECT_ELEM_CVE_XML))
+check("直接在 <elem> 裡的 CVE 編號有被撈到", direct_cve is not None and "CVE-2011-2523" in direct_cve["cve_ids"])
+check("無分數但 Exploitable 時被判成 critical", direct_cve is not None and nmap_scan._score_to_severity(direct_cve["score"]) is None)  # 確認 score 是 None
+# 注：severity 的判定在 parse_nmap_vuln_findings() 裡，這裡只測 _parse_vuln_table
+
 UNKNOWN_STATE_XML = """<table key="CVE-2018-0002">
   <elem key="title">Could not test</elem>
   <elem key="state">UNKNOWN (unable to test)</elem>
@@ -142,9 +155,10 @@ check("10.0 換算成 critical", nmap_scan._score_to_severity(messy["score"]) ==
 print()
 print("==== nmap_scan：整份 XML 走查（parse_nmap_vuln_findings）====")
 
-# 合成一份完整 nmap XML：
+# 合成一份完整 nmap XML，涵蓋多種實務格式：
 # - host 層級（hostscript）一筆 VULNERABLE，含 risk_factor（無 CVSS）
 # - port 層級（tcp/443）一筆 VULNERABLE，含 CVSS 3.0 = 9.8（應判 critical）
+# - port 層級（tcp/21）實務格式：直接在 <elem> 裡的 CVE + Exploitable（無 CVSS 和 risk_factor）
 # - port 層級另一筆 NOT VULNERABLE（不該產生 finding）
 # - prescript（broadcast 類，不屬於這台主機本身）——不該被處理
 SAMPLE_NMAP_XML = """<?xml version="1.0"?>
@@ -164,6 +178,17 @@ SAMPLE_NMAP_XML = """<?xml version="1.0"?>
       </script>
     </hostscript>
     <ports>
+      <port protocol="tcp" portid="21">
+        <state state="open"/>
+        <service name="ftp"/>
+        <script id="ftp-vsftpd-backdoor" output="...">
+          <table key="CVE-2011-2523">
+            <elem key="state">VULNERABLE (Exploitable)</elem>
+            <elem>CVE:CVE-2011-2523</elem>
+            <elem>https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2011-2523</elem>
+          </table>
+        </script>
+      </port>
       <port protocol="tcp" portid="443">
         <state state="open"/>
         <service name="https"/>
@@ -194,16 +219,22 @@ with tempfile.NamedTemporaryFile(mode="w", suffix=".xml", delete=False, encoding
 
 try:
     vuln_findings = nmap_scan.parse_nmap_vuln_findings(xml_path)
-    check("只產生 2 筆 finding（NOT VULNERABLE、broadcast 都被跳過）", len(vuln_findings) == 2)
+    check("產生 3 筆 finding（NOT VULNERABLE、broadcast 都被跳過）", len(vuln_findings) == 3)
 
     by_script = {f["detail"]["script_id"]: f for f in vuln_findings}
     check("host 層級（hostscript）的弱點有被抓到", "smb-vuln-ms17-010" in by_script)
     check("port 層級的弱點有被抓到", "ssl-heartbleed" in by_script)
+    check("實務格式（直接 elem CVE + Exploitable）的弱點有被抓到", "ftp-vsftpd-backdoor" in by_script)
 
     hostlevel = by_script.get("smb-vuln-ms17-010")
     check("host 層級 finding 沒有 port 標籤", hostlevel is not None and hostlevel["detail"]["port"] is None)
     check("host 層級 finding 用 risk_factor 判成 critical", hostlevel is not None and hostlevel["severity"] == "critical")
     check("host 層級 finding target 對到正確 IP", hostlevel is not None and hostlevel["target"] == "192.168.100.1")
+
+    ftp_level = by_script.get("ftp-vsftpd-backdoor")
+    check("port 層級 FTP finding 有標出 tcp/21", ftp_level is not None and ftp_level["detail"]["port"] == "tcp/21")
+    check("port 層級 FTP finding 無 CVSS 分數但 Exploitable 判成 critical", ftp_level is not None and ftp_level["severity"] == "critical")
+    check("port 層級 FTP finding 帶出 CVE 編號", ftp_level is not None and "CVE-2011-2523" in ftp_level["detail"]["cve_ids"])
 
     portlevel = by_script.get("ssl-heartbleed")
     check("port 層級 finding 有標出 tcp/443", portlevel is not None and portlevel["detail"]["port"] == "tcp/443")

@@ -13,10 +13,10 @@ cwe_kb/retrieve_cwe.py、iec_kb/retrieve_iec.py、cra_kb/retrieve_cra.py
 （雜訊也放行），要嘛太嚴格（連正確答案也被擋掉）。
 
 因此改變 RAG 在系統裡的角色：規則沒比對到時，RAG **不再自己判定
-matched**，一律維持 status="needs_review"，只附上 CWE/CRA 各前
-幾名候選（含分數）給使用者在複核時參考。這比較誠實地反映目前
-系統實際的判讀能力，也符合一路以來的原則——AI 判讀是輔助，
-不是最終定論。
+matched**，一律維持 status="needs_review"，只附上 CWE/IEC/CRA 各
+信心最高的 1 筆候選，配上針對這筆 finding 產出的一句話修補建議，
+給使用者在複核時參考。這比較誠實地反映目前系統實際的判讀能力，
+也符合一路以來的原則——AI 判讀是輔助，不是最終定論。
 
 跟下游的關係：report.py 呼叫的是 analyze_findings()，回傳格式
 比舊版多了 rag_suggestions 這個欄位（規則已比對到時是 None，
@@ -73,15 +73,20 @@ except ImportError:
 try:
     from core.llm_advisor import advise_finding as llm_advise_finding
     from core.llm_advisor import derive_cra_remediation
+    from core.llm_advisor import derive_cwe_remediation
+    from core.llm_advisor import derive_iec_remediation
 except ImportError:
     llm_advise_finding = None
     derive_cra_remediation = None
+    derive_cwe_remediation = None
+    derive_iec_remediation = None
     print("[analysis] 警告：llm_advisor 無法匯入，LLM 研判建議停用")
 
-# 每個知識庫各給幾筆候選——不做信心分數過濾（實測證明單一門檻無法
-# 區分雜訊跟真訊號），改成把前幾名都列出來，交給人腦判斷，而不是
-# 假裝系統能自動篩出「唯一正確答案」。
-RAG_SUGGESTION_TOP_K = 5
+# 每個知識庫只取信心最高的 1 筆——不做信心分數過濾（實測證明單一門檻
+# 無法區分雜訊跟真訊號，見本檔案開頭說明），但列出多筆候選要求使用者
+# 自己篩選的體驗也不好，改成只呈現最相關的一筆，配上 LLM 針對這筆
+# finding 產出的一句話修補建議（見 _with_*_remediation()）。
+RAG_SUGGESTION_TOP_K = 1
 
 
 def _build_rag_query(finding: dict) -> str:
@@ -114,19 +119,36 @@ def _build_rag_query(finding: dict) -> str:
     return finding["title"]
 
 
+def _with_cwe_remediation(finding: dict, candidate: dict) -> dict:
+    """跟 _with_cra_remediation 同一套邏輯，套用在 CWE 候選上。"""
+    if derive_cwe_remediation is None:
+        return {**candidate, "text_zh": None}
+    try:
+        text_zh = derive_cwe_remediation(
+            finding, candidate.get("cwe_id", ""), candidate.get("name", ""), candidate.get("description", "")
+        )
+    except Exception as e:
+        print(f"[analysis] CWE 修補建議產生失敗，略過（{e}）")
+        text_zh = None
+    return {**candidate, "text_zh": text_zh}
+
+
 def _cwe_candidates(finding: dict) -> list[dict]:
     """
-    回傳 CWE 候選清單（hybrid：dense+sparse 合併排名，不做信心分數
-    過濾），任何失敗（模組不存在、Qdrant 連不上、collection 還沒
-    建立）都回傳空 list，不讓分析層因為這條選用路徑掛掉整個流程。
+    回傳 CWE 候選清單（hybrid：dense+sparse 合併排名），只取信心最高的
+    1 筆（見 RAG_SUGGESTION_TOP_K 的說明），附上針對這筆 finding 產出的
+    一句話修補建議。任何失敗（模組不存在、Qdrant 連不上、collection
+    還沒建立）都回傳空 list，不讓分析層因為這條選用路徑掛掉整個流程。
     """
     if retrieve_cwe_hybrid is None:
         return []
     try:
-        return retrieve_cwe_hybrid(_build_rag_query(finding), top_k=RAG_SUGGESTION_TOP_K)
+        candidates = retrieve_cwe_hybrid(_build_rag_query(finding), top_k=RAG_SUGGESTION_TOP_K)
     except Exception as e:
         print(f"[analysis] CWE 候選查詢失敗，略過（{e}）")
         return []
+
+    return [_with_cwe_remediation(finding, c) for c in candidates]
 
 
 def _cra_candidates(finding: dict) -> list[dict]:
@@ -168,9 +190,25 @@ def _with_cra_remediation(finding: dict, candidate: dict) -> dict:
     return {**candidate, "text_zh": text_zh}
 
 
+def _with_iec_remediation(finding: dict, candidate: dict) -> dict:
+    """跟 _with_cra_remediation 同一套邏輯，套用在 IEC 62443-4-2 候選上。"""
+    if derive_iec_remediation is None:
+        return {**candidate, "text_zh": None}
+    try:
+        text_zh = derive_iec_remediation(
+            finding, candidate.get("article_no", ""), candidate.get("title", ""),
+            candidate.get("group", ""), candidate.get("text", ""),
+        )
+    except Exception as e:
+        print(f"[analysis] IEC 修補建議產生失敗，略過（{e}）")
+        text_zh = None
+    return {**candidate, "text_zh": text_zh}
+
+
 def _iec_candidates(finding: dict) -> list[dict]:
     """
-    跟 _cwe_candidates 邏輯一致，查詢對象是 IEC 62443-4-2（元件技術要求）。
+    跟 _cwe_candidates 邏輯一致，查詢對象是 IEC 62443-4-2（元件技術要求），
+    只取信心最高的 1 筆，附上針對這筆 finding 產出的一句話修補建議。
 
     只查 4-2、不查 4-1：4-1 是開發流程要求（SM-4 安全專業能力、SVV-4
     滲透測試…），跟單一筆掃描結果在語意上沒有對應關係，混進同一份
@@ -180,10 +218,12 @@ def _iec_candidates(finding: dict) -> list[dict]:
     if retrieve_iec_hybrid is None:
         return []
     try:
-        return retrieve_iec_hybrid(_build_rag_query(finding), top_k=RAG_SUGGESTION_TOP_K)
+        candidates = retrieve_iec_hybrid(_build_rag_query(finding), top_k=RAG_SUGGESTION_TOP_K)
     except Exception as e:
         print(f"[analysis] IEC 62443 候選查詢失敗，略過（{e}）")
         return []
+
+    return [_with_iec_remediation(finding, c) for c in candidates]
 
 
 def _llm_advice(finding: dict, suggestions: dict) -> dict | None:
@@ -280,8 +320,8 @@ def analyze_finding(finding: dict, use_llm: bool = False) -> dict:
        依據都是外部、可驗證的來源（人工寫死的規則表／公開 CVE 資料庫），
        不是需要人工複核的猜測
     3. 兩者都沒有 → 維持 status="needs_review"，附上 rag_suggestions
-       （CWE / IEC 62443-4-2 / CRA 各前 N 名候選 + 分數），供人工複核時
-       參考，不自動判定
+       （CWE / IEC 62443-4-2 / CRA 各信心最高的 1 筆候選 + 一句話修補
+       建議），供人工複核時參考，不自動判定
     4. use_llm=True 時，額外把候選交給 LLM 產出一段文字研判
        （llm_advice），一樣只是附加的參考意見，不影響 status
 
