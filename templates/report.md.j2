@@ -64,7 +64,7 @@
 {{ item.title }}（{{ item.target }}）
 
 {% set cwe = item.rag_suggestions.cwe[0] if item.rag_suggestions and item.rag_suggestions.cwe else None %}
-CVE
+CWE
 {{ (cwe.text_zh or cwe.name) if cwe else "（語意檢索沒有找到相關候選）" }}
 {{ cwe.cwe_id if cwe else "（無）" }}
 
