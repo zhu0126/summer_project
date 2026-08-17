@@ -227,8 +227,8 @@ def generate_pentest_plan(use_llm: bool = Form(True)):
     只讀取既有掃描結果，不會觸發新掃描；build_test_plan() 本身只產生「計畫
     與指令字串」，不執行任何攻擊性行為，所以這裡不需要跟 /api/scan 一樣搶
     _lock——它不寫檔、不碰 common.get_output_dir() 那份全域輸出路徑狀態，
-    跟一次正在跑的掃描不會互相干擾。use_llm=True 時會呼叫 Gemini 幫每個
-    活目標推導測試目標，需要 GEMINI_API_KEY；沒設定時 build_test_plan()
+    跟一次正在跑的掃描不會互相干擾。use_llm=True 時會呼叫 Claude 幫每個
+    活目標推導測試目標，需要 ANTHROPIC_API_KEY；沒設定時 build_test_plan()
     會自動降級成通用樣板，不會噴錯。
     """
     if _job is None or _job.get("result") is None:

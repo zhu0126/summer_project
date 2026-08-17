@@ -30,9 +30,9 @@
    成品現狀，4-1 規範的是開發流程，兩者對不上。改成整場掃描查一次，
    在報告獨立一節呈現。
 3. **AI 研判建議**（可選）—
-   - 調用 Gemini LLM 為待複核項目撰寫研判意見
+   - 調用 Claude LLM 為待複核項目撰寫研判意見
    - 強制引用驗證（只允許引用提供的參考資料，防止幻覺）
-   - 需設定 `GEMINI_API_KEY` 環境變數
+   - 需設定 `ANTHROPIC_API_KEY` 環境變數
 
 ### 合規報告
 
@@ -53,7 +53,7 @@
         ↓
 [rag_context.py] ← 組裝 LLM prompt
         ↓
-[llm_advisor.py] ← 可選：Gemini API 調用
+[llm_advisor.py] ← 可選：Claude API 調用
         ↓
 [report.py] ← Jinja2 樣板渲染
         ↓
@@ -124,11 +124,13 @@ python3 -m iec_kb.build_iec_index
 建立 `.env` 檔案（已在 `.gitignore`）：
 
 ```bash
-GEMINI_API_KEY=your-actual-key-here
-GEMINI_MODEL=gemini-2.5-flash
+ANTHROPIC_API_KEY=your-actual-key-here
+CLAUDE_MODEL=claude-haiku-4-5-20251001
 ```
 
-金鑰可從 [Google AI Studio](https://aistudio.google.com/app/apikey) 免費申請。
+金鑰可從 [Anthropic Console](https://console.anthropic.com/settings/keys) 申請。
+`CLAUDE_MODEL` 可省略，預設用 Haiku（速度快、成本低，適合這裡逐筆呼叫的短輸出用量）；
+要換更高階模型（例如 `claude-sonnet-5`）只需要改這個環境變數，不需要改程式碼。
 
 ## 使用
 
@@ -230,7 +232,7 @@ python3 -m core.report output/combined_20260812_xxxxx.json --llm
 │   ├── keyword_rules.py      # 規則資料庫（CWE ID 對應）
 │   ├── report.py             # 報告產生（Jinja2 樣板）
 │   ├── rag_context.py        # context 格式化（LLM 用）
-│   ├── llm_advisor.py        # Gemini LLM 呼叫 + 引用驗證
+│   ├── llm_advisor.py        # Claude LLM 呼叫 + 引用驗證
 │   └── common.py             # 通用函式（finding 結構、檔案 I/O）
 ├── scanners/                 # 掃描模組
 │   ├── nmap_scan.py
@@ -312,7 +314,7 @@ python3 -m core.llm_advisor
 | CWE/CRA/IEC 索引未建立 | 該知識庫候選為空，其他兩個照常 |
 | 未建 IEC 索引（無標準 PDF） | 62443 候選與開發流程對照整節略過 |
 | `rank-bm25` 未安裝 | 退化為純向量（dense-only）排名 |
-| Gemini API 金鑰未設/無效 | LLM 段落略過，報告仍可閱讀 |
+| Claude API 金鑰未設/無效 | LLM 段落略過，報告仍可閱讀 |
 | PDF 轉換失敗 | Markdown 報告正常產出 |
 | ZAP daemon 不存在 | 加 `--zap-auto-start` 自動啟動；或略過 Web 掃描 |
 
@@ -348,9 +350,9 @@ python3 -c "from core.llm_advisor import is_available; print(is_available())"
 ```
 
 結果為 `False` 的話：
-- 確認 `pip install google-genai`
-- 確認 `.env` 裡有 `GEMINI_API_KEY=...`
-- 確認 API 金鑰有效（去 AI Studio 測試）
+- 確認 `pip install anthropic`
+- 確認 `.env` 裡有 `ANTHROPIC_API_KEY=...`
+- 確認 API 金鑰有效（去 [Anthropic Console](https://console.anthropic.com/settings/keys) 測試）
 
 ### PDF 轉換失敗
 

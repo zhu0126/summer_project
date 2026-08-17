@@ -299,7 +299,7 @@ def main():
                          help="操作者名稱，寫入報告的 Scan Information（搭配 --report 使用）")
     parser.add_argument("--llm", action="store_true",
                          help="報告中的待複核項目附上 LLM 研判建議（搭配 --report 使用）。"
-                              "需要 pip install google-genai 並設定環境變數 GEMINI_API_KEY；"
+                              "需要 pip install anthropic 並設定環境變數 ANTHROPIC_API_KEY；"
                               "會把 finding 內容（含目標 IP、服務清單）送給外部 API")
     parser.add_argument("--org", default="",
                          help="單位/系統名稱，顯示於 PDF 頁首頁尾（搭配 --report 使用，PDF 會自動產生）")

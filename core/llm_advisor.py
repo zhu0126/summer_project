@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 RAG 的最後一段：把檢索到的 CWE / IEC 62443 / CRA 候選 + finding 本身交給 LLM，
-產出一段人話的研判建議（Gemini，google-genai Interactions API）。
+產出一段人話的研判建議（Claude，Anthropic Messages API）。
 
 這支模組補上 keyword_rules.py 開頭那句註解裡一直寫著、但實際上還沒
 做的「LLM 判讀」——在這之前，檢索結果是直接列成一串候選丟進報告，
@@ -23,7 +23,7 @@ RAG 的最後一段：把檢索到的 CWE / IEC 62443 / CRA 候選 + finding 本
    參考意見，不會讓任何一筆變成 matched。系統裡唯一會自動判定
    matched 的來源仍然只有規則比對。
 
-依賴與金鑰都是選用的：沒裝 google-genai、沒設 GEMINI_API_KEY、
+依賴與金鑰都是選用的：沒裝 anthropic、沒設 ANTHROPIC_API_KEY、
 或 API 呼叫失敗，一律回傳 None 並印警告，讓分析流程照常跑完——
 跟 CWE/CRA 知識庫連不上時的降級方式一致。
 """
@@ -41,11 +41,15 @@ except ImportError:
 
 # 環境變數名稱。不接受用參數傳明碼金鑰進來，也不從設定檔讀——
 # 金鑰跟著程式碼或設定檔一起進版控是最常見的外洩途徑。
-API_KEY_ENV = "GEMINI_API_KEY"
+API_KEY_ENV = "ANTHROPIC_API_KEY"
 
 # 模型名稱允許用環境變數覆寫：模型版本汰換的速度比這個專案改版的速度快，
-# 寫死在程式碼裡會變成每次換模型都要改一次原始碼。
-MODEL_NAME = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+# 寫死在程式碼裡會變成每次換模型都要改一次原始碼。預設用 Haiku（快、便宜）
+# 而不是 Sonnet/Opus——這裡每次呼叫的輸出都很短（一句話的修補建議、一段
+# 研判摘要），不需要最頂級的推理能力，換成 Haiku 對「同一批 finding 逐筆
+# 呼叫」這種用量模式比較省成本。要換更高階的模型，設環境變數 CLAUDE_MODEL
+# 即可，不需要改程式碼。
+MODEL_NAME = os.environ.get("CLAUDE_MODEL", "claude-haiku-4-5-20251001")
 
 SYSTEM_INSTRUCTION = """You are an assistant supporting IoT product cybersecurity compliance review. You will be given one scan finding, plus candidate reference material retrieved via semantic search from three sources: a CWE weakness database, the technical component requirements of IEC 62443-4-2, and the full text of the EU CRA (Regulation (EU) 2024/2847).
 
@@ -118,19 +122,27 @@ def is_available() -> bool:
     if not os.environ.get(API_KEY_ENV):
         return False
     try:
-        from google import genai  # noqa: F401
+        from anthropic import Anthropic  # noqa: F401
     except ImportError:
         return False
     return True
 
 
-def ask_gemini(system_instruction: str, prompt: str) -> str | None:
-    """
-    送一次請求給 Gemini，回傳純文字回覆；任何失敗回傳 None。
+# 每次呼叫的輸出上限（token 數，不是字元數）。這裡所有 system instruction
+# 要求的輸出都很短（一句話的修補建議、一段最多 450 字的研判摘要），
+# 1024 token 遠遠夠用，設上限主要是防止模型異常（例如沒有照指示停下來）
+# 時一次呼叫的花費跟等待時間失控，不是預期會被用到的天花板。
+MAX_OUTPUT_TOKENS = 1024
 
-    store=False：掃描結果含目標 IP、韌體檔名、內網服務清單，屬於客戶
-    的資安現況資料，不該留存在服務端。這個參數沿用原始參考實作，
-    在這個用途下更是必要而不只是預設值。
+
+def ask_llm(system_instruction: str, prompt: str) -> str | None:
+    """
+    送一次請求給 Claude，回傳純文字回覆；任何失敗回傳 None。
+
+    沒有對應 Gemini 那邊 store=False 的參數：Anthropic 的 Messages API
+    本來就是無狀態的單次請求（不像某些平台的 Assistants/Threads API
+    會把對話存在伺服器端），這裡本來就不會有任何一次呼叫的內容被留存
+    在 Anthropic 那一側的對話紀錄裡，不需要額外關掉什麼。
     """
     api_key = os.environ.get(API_KEY_ENV)
     if not api_key:
@@ -138,102 +150,139 @@ def ask_gemini(system_instruction: str, prompt: str) -> str | None:
         return None
 
     try:
-        from google import genai
+        from anthropic import Anthropic
     except ImportError:
-        print("[llm_advisor] 未安裝 google-genai，略過 LLM 研判。"
-              "安裝方式：pip install google-genai")
+        print("[llm_advisor] 未安裝 anthropic，略過 LLM 研判。"
+              "安裝方式：pip install anthropic")
         return None
 
     try:
-        client = genai.Client(api_key=api_key)
-        interaction = client.interactions.create(
+        client = Anthropic(api_key=api_key)
+        message = client.messages.create(
             model=MODEL_NAME,
-            system_instruction=system_instruction,
-            input=prompt,
-            store=False,
+            max_tokens=MAX_OUTPUT_TOKENS,
+            system=system_instruction,
+            messages=[{"role": "user", "content": prompt}],
         )
-        return interaction.output_text
+        return "".join(block.text for block in message.content if block.type == "text")
     except Exception as e:
         # 網路不通、金鑰無效、額度用完、模型名稱不存在——這些都不該
         # 讓整份報告產不出來，掃描結果本身仍然是有價值的產出。
-        print(f"[llm_advisor] Gemini 呼叫失敗，略過 LLM 研判（{e}）")
+        print(f"[llm_advisor] Claude 呼叫失敗，略過 LLM 研判（{e}）")
         return None
 
 
-# CRA 條文中譯快取：翻譯結果只跟 article_no 本身有關（跟哪一筆 finding
-# 觸發了這次檢索無關），同一條文在整場掃描、甚至跨掃描都應該只呼叫一次
-# Gemini。存成檔案而不是只放記憶體，是因為 CLI 每次執行都是全新的 process，
-# 只有記憶體快取的話，同一批常見條文（telnet、預設密碼那幾條）每次掃描
-# 都要重譯一次，白白多付 API 成本。
-CRA_TRANSLATION_CACHE_PATH = (
-    Path(__file__).resolve().parent.parent / "cra_kb" / "cra_data" / "cra_zh_cache.json"
+# CRA 條文＋finding 一起讀，產出一句話的修補建議，用的快取。
+#
+# 已修正的設計問題：這裡原本（translate_cra_article）只翻譯條文本身，
+# 快取 key 只用 article_no——結果同一條文不管配上哪筆 finding，顯示的都是
+# 同一段「產品應具備適當的存取控制機制」這種法規原文的抽象paraphrase，
+# 使用者看了還是不知道「所以我該做什麼」。條文內容本來就寫給所有產品類型
+# 通用，不可能天生具體；要「一眼看出怎麼修補」，答案必須是「這條要求
+# 用在這筆 finding 上，具體該做的事」，離不開 finding 本身的資訊
+# （service、port、alert 內容…），不能只餵條文全文。
+#
+# 因此快取 key 改成 article_no + finding 的「特徵」（category/source/title，
+# 不是 finding_id——finding_id 是每次掃描隨機產生的 uuid，同一台裝置在不同
+# 次掃描間不會相同，但同一種弱點的 category/source/title 通常是穩定的字串，
+# 例如同一個 "tcp/6379 redis"）。這樣同一種弱點跨掃描仍然吃得到快取，
+# 不用每次都重新呼叫一次 Claude，但不同 finding 不會再共用同一句不相干的
+# 修補建議。
+CRA_REMEDIATION_CACHE_PATH = (
+    Path(__file__).resolve().parent.parent / "cra_kb" / "cra_data" / "cra_remediation_cache.json"
 )
 
-CRA_TRANSLATE_SYSTEM_INSTRUCTION = """You are helping a product security engineer understand one article of the EU Cyber Resilience Act (Regulation (EU) 2024/2847), given its official English text.
+CRA_REMEDIATION_SYSTEM_INSTRUCTION = """You are helping a product security engineer understand, for ONE specific scan finding, what a cited article of the EU Cyber Resilience Act (Regulation (EU) 2024/2847) means they should actually do about it.
+
+You are given: (1) one scan finding (title, category, and technical detail), and (2) the official English text of a CRA article that semantic search matched to this finding. The article text is general — it applies to all kinds of products, not just this one — so do not just paraphrase it in the abstract.
 
 Rules:
-1. Do not produce a literal legal translation. Rewrite the requirement in Traditional Chinese (zh-TW) as concrete, actionable guidance — what a manufacturer or product team should actually do to address it.
-2. Base your answer only on the given article text. Do not invent obligations that are not present in it, and do not cite other articles.
-3. If the article is purely definitional, procedural, or scope-setting (e.g. definitions, entry into force, scope of the Regulation) and has no actionable technical requirement, summarize its purpose in one short sentence instead of forcing an action item.
-4. Output plain Traditional Chinese text only. No markdown, no bullet points, no headings, no leading label. At most 150 characters."""
+1. Write EXACTLY ONE sentence in Traditional Chinese (zh-TW), at most 80 characters, telling the reader concretely how to remediate or address THIS finding, grounded in what the cited article requires.
+2. Do not restate the finding's title verbatim, and do not quote the legal text. Translate the requirement into a concrete action for this specific finding — for example, instead of "產品應確保機密性", write "此服務目前以明碼傳輸帳密，應停用明碼協定並改用加密連線（如 SSH/TLS）"。
+3. Semantic search is not guaranteed to be accurate — if the article's connection to this finding looks weak or indirect, phrase the sentence as something to verify rather than a certain conclusion (e.g. "建議確認...是否..." 而不是斷言).
+4. Output the sentence only. No markdown, no bullet points, no headings, no leading label, no trailing explanation."""
 
-# 條文全文送進翻譯 prompt 前的字元上限，理由跟 rag_context.py 的
+# 條文全文送進 prompt 前的字元上限，理由跟 rag_context.py 的
 # MAX_CHARS_PER_ENTRY 一致：CRA 少數條文（如 Article 13）有好幾千字，
 # 而且真正決定「這條在講什麼」的通常是開頭幾段。
-CRA_TRANSLATE_INPUT_MAX_CHARS = 4000
+CRA_REMEDIATION_INPUT_MAX_CHARS = 4000
 
 
-def _load_cra_translation_cache() -> dict:
-    if not CRA_TRANSLATION_CACHE_PATH.is_file():
+def _finding_signature(finding: dict) -> str:
+    """穩定的 finding 識別字串，理由見上面 CRA_REMEDIATION_CACHE_PATH 的說明。"""
+    return f"{finding.get('category', '')}|{finding.get('source', '')}|{finding.get('title', '')}"
+
+
+def _load_cra_remediation_cache() -> dict:
+    if not CRA_REMEDIATION_CACHE_PATH.is_file():
         return {}
     try:
-        return json.loads(CRA_TRANSLATION_CACHE_PATH.read_text(encoding="utf-8"))
+        return json.loads(CRA_REMEDIATION_CACHE_PATH.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as e:
-        print(f"[llm_advisor] 警告：CRA 中譯快取讀取失敗，視為空快取（{e}）")
+        print(f"[llm_advisor] 警告：CRA 修補建議快取讀取失敗，視為空快取（{e}）")
         return {}
 
 
-def _save_cra_translation_cache(cache: dict) -> None:
+def _save_cra_remediation_cache(cache: dict) -> None:
     try:
-        CRA_TRANSLATION_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
-        CRA_TRANSLATION_CACHE_PATH.write_text(
+        CRA_REMEDIATION_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        CRA_REMEDIATION_CACHE_PATH.write_text(
             json.dumps(cache, ensure_ascii=False, indent=2), encoding="utf-8"
         )
     except OSError as e:
-        # 寫檔失敗（例如唯讀檔案系統）不該讓這次已經拿到的翻譯結果作廢，
-        # 只是下次沒辦法吃到快取、要重新呼叫一次 Gemini。
-        print(f"[llm_advisor] 警告：CRA 中譯快取寫入失敗，本次翻譯結果不會保留（{e}）")
+        # 寫檔失敗（例如唯讀檔案系統）不該讓這次已經拿到的結果作廢，
+        # 只是下次沒辦法吃到快取、要重新呼叫一次 Claude。
+        print(f"[llm_advisor] 警告：CRA 修補建議快取寫入失敗，本次結果不會保留（{e}）")
 
 
-def translate_cra_article(article_no: str, title: str, text: str) -> str | None:
+def derive_cra_remediation(finding: dict, article_no: str, title: str, text: str) -> str | None:
     """
-    把一條 CRA 條文的英文原文，轉成一段具體可執行的繁體中文說明，取代
-    直接顯示 title（title 常常只是像 "Reporting obligations" 這種標題，
-    看不出實際要做什麼）。
+    把「一筆 finding」+「語意檢索配對到的 CRA 條文全文」一起交給 Claude，
+    產出一句具體可執行的繁體中文修補建議——取代直接顯示條文 title
+    （常常只是像 "Reporting obligations" 這種抽象標題）或整段法規原文的
+    paraphrase（讀完還是不知道「所以我該做什麼」）。
 
-    回傳 None 代表這條路徑不可用（沒金鑰/沒套件/呼叫失敗），呼叫端
-    應該退回顯示原文（text）或 title，不能讓整筆候選因此消失——跟
+    回傳 None 代表這條路徑不可用（沒金鑰/沒套件/呼叫失敗），呼叫端應該
+    退回顯示條文原文（text）或 title，不能讓整筆候選因此消失——跟
     llm_advisor 其他函式一致的降級原則。
     """
     if not article_no:
         return None
 
-    cache = _load_cra_translation_cache()
-    if article_no in cache:
-        return cache[article_no]
+    cache = _load_cra_remediation_cache()
+    cache_key = f"{article_no}::{_finding_signature(finding)}"
+    if cache_key in cache:
+        return cache[cache_key]
 
-    truncated = (text or "").strip()
-    if len(truncated) > CRA_TRANSLATE_INPUT_MAX_CHARS:
-        truncated = truncated[:CRA_TRANSLATE_INPUT_MAX_CHARS].rstrip() + "……"
+    truncated_article = (text or "").strip()
+    if len(truncated_article) > CRA_REMEDIATION_INPUT_MAX_CHARS:
+        truncated_article = truncated_article[:CRA_REMEDIATION_INPUT_MAX_CHARS].rstrip() + "……"
 
-    prompt = f"Article: {article_no} — {title}\n\n{truncated}"
-    answer = ask_gemini(CRA_TRANSLATE_SYSTEM_INSTRUCTION, prompt)
+    detail = finding.get("detail") or {}
+    detail_lines = "\n".join(
+        f"- {k}: {v}" for k, v in detail.items() if v not in (None, "", [], {})
+    )
+
+    prompt = f"""# Scan Finding
+
+- Title: {finding.get('title', '')}
+- Category: {finding.get('category', '')} (source tool: {finding.get('source', '')})
+- Target: {finding.get('target', '')}
+{detail_lines}
+
+# Cited CRA Article (matched by semantic search, may be a loose match)
+
+{article_no} — {title}
+
+{truncated_article}
+"""
+    answer = ask_llm(CRA_REMEDIATION_SYSTEM_INSTRUCTION, prompt)
     if answer is None:
         return None
 
     result = answer.strip()
-    cache[article_no] = result
-    _save_cra_translation_cache(cache)
+    cache[cache_key] = result
+    _save_cra_remediation_cache(cache)
     return result
 
 
@@ -251,7 +300,7 @@ Rules:
 
 def derive_test_objective(finding: dict, requirement: dict | None) -> str | None:
     """
-    把一筆 finding（可選地加上它對應到的法規要求）交給 Gemini，推導出
+    把一筆 finding（可選地加上它對應到的法規要求）交給 Claude，推導出
     一句「該對這個活目標驗證/嘗試什麼」的測試目標，作為 PentestGPT 的
     --instruction 注入點。
 
@@ -280,7 +329,7 @@ def derive_test_objective(finding: dict, requirement: dict | None) -> str | None
 - Target: {finding.get('target', '')}
 {detail_lines}{requirement_block}
 """
-    answer = ask_gemini(PENTEST_OBJECTIVE_SYSTEM_INSTRUCTION, prompt)
+    answer = ask_llm(PENTEST_OBJECTIVE_SYSTEM_INSTRUCTION, prompt)
     return answer.strip() if answer else None
 
 
@@ -400,7 +449,7 @@ def advise_finding(finding: dict, suggestions: dict | None) -> dict | None:
         return None
 
     context = build_context(cwe_entries, cra_entries, iec_entries)
-    answer = ask_gemini(SYSTEM_INSTRUCTION, build_prompt(finding, context))
+    answer = ask_llm(SYSTEM_INSTRUCTION, build_prompt(finding, context))
     if answer is None:
         return None
 
@@ -421,7 +470,7 @@ if __name__ == "__main__":
     from core.analysis import analyze_finding
 
     if not is_available():
-        print(f"LLM 尚未就緒：請確認已 pip install google-genai 並設定 {API_KEY_ENV}")
+        print(f"LLM 尚未就緒：請確認已 pip install anthropic 並設定 {API_KEY_ENV}")
         sys.exit(1)
 
     sample = make_finding("network", "nmap", "192.168.1.20", "info", "tcp/23 telnet",

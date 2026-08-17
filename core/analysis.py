@@ -72,10 +72,10 @@ except ImportError:
 
 try:
     from core.llm_advisor import advise_finding as llm_advise_finding
-    from core.llm_advisor import translate_cra_article
+    from core.llm_advisor import derive_cra_remediation
 except ImportError:
     llm_advise_finding = None
-    translate_cra_article = None
+    derive_cra_remediation = None
     print("[analysis] 警告：llm_advisor 無法匯入，LLM 研判建議停用")
 
 # 每個知識庫各給幾筆候選——不做信心分數過濾（實測證明單一門檻無法
@@ -133,8 +133,11 @@ def _cra_candidates(finding: dict) -> list[dict]:
     """
     跟 _cwe_candidates 邏輯一致，查詢對象是 CRA collection。額外幫每筆
     候選附上 text_zh——CRA 條文的 title 常常只是像 "Reporting obligations"
-    這種標題本身看不出具體要做什麼，改附一段用 Gemini 把條文全文轉成
-    可執行中文說明的版本，呈現層（webapp/report）改成優先顯示這欄。
+    這種抽象標題，條文全文（text）本身也是寫給所有產品類型看的通用法規
+    文字，使用者讀了還是不知道「所以我該做什麼」。改附一句用 Claude 把
+    「finding 本身 + 條文」一起讀完後產出的具體修補建議（見
+    llm_advisor.derive_cra_remediation() 的說明），呈現層（webapp/report）
+    改成優先顯示這欄。
     """
     if retrieve_cra_hybrid is None:
         return []
@@ -144,23 +147,23 @@ def _cra_candidates(finding: dict) -> list[dict]:
         print(f"[analysis] CRA 候選查詢失敗，略過（{e}）")
         return []
 
-    return [_with_cra_translation(c) for c in candidates]
+    return [_with_cra_remediation(finding, c) for c in candidates]
 
 
-def _with_cra_translation(candidate: dict) -> dict:
+def _with_cra_remediation(finding: dict, candidate: dict) -> dict:
     """
     附上 text_zh；找不到 LLM 路徑或呼叫失敗都回傳 text_zh=None，讓呈現層
-    自己退回顯示 text（英文原文）——不能因為翻譯這條選用路徑失敗，就讓
+    自己退回顯示 text（英文原文）——不能因為這條選用路徑失敗，就讓
     整筆候選消失或擋住其他候選的顯示。
     """
-    if translate_cra_article is None:
+    if derive_cra_remediation is None:
         return {**candidate, "text_zh": None}
     try:
-        text_zh = translate_cra_article(
-            candidate.get("article_no", ""), candidate.get("title", ""), candidate.get("text", "")
+        text_zh = derive_cra_remediation(
+            finding, candidate.get("article_no", ""), candidate.get("title", ""), candidate.get("text", "")
         )
     except Exception as e:
-        print(f"[analysis] CRA 條文中譯失敗，略過（{e}）")
+        print(f"[analysis] CRA 修補建議產生失敗，略過（{e}）")
         text_zh = None
     return {**candidate, "text_zh": text_zh}
 
@@ -191,7 +194,7 @@ def _llm_advice(finding: dict, suggestions: dict) -> dict | None:
     同一份 suggestions——報告裡列給人看的候選，跟 LLM 實際讀到的
     候選必須是同一份，否則人工複核時無從判斷這段建議是根據什麼寫的。
 
-    任何失敗都回 None（沒裝 google-genai、沒設金鑰、API 呼叫失敗），
+    任何失敗都回 None（沒裝 anthropic、沒設金鑰、API 呼叫失敗），
     跟 CWE/CRA 檢索的降級原則一致：這是選用的加值路徑，不該讓整份
     分析結果產不出來。
     """

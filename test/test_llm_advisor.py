@@ -3,7 +3,7 @@
 離線測試 RAG 的 context 組裝層（core/rag_context.py）跟 LLM 研判層
 （core/llm_advisor.py）的引用查核邏輯。
 
-刻意不碰 Qdrant、不呼叫 Gemini：這兩層的職責是「把檢索結果變成
+刻意不碰 Qdrant、不呼叫 Claude：這兩層的職責是「把檢索結果變成
 prompt」跟「檢查回覆有沒有亂引用」，兩件事都是純字串處理，用寫死的
 假資料就能完整驗證。真正需要外部服務的路徑（檢索、API 呼叫）另外
 用 test_rag.py 跟 llm_advisor.py 的 __main__ 手動測。
@@ -191,15 +191,15 @@ def _must_not_be_called(system_instruction, prompt):
     raise AssertionError("沒有候選資料時不應該呼叫 LLM")
 
 
-original_ask = llm_advisor.ask_gemini
-llm_advisor.ask_gemini = _must_not_be_called
+original_ask = llm_advisor.ask_llm
+llm_advisor.ask_llm = _must_not_be_called
 try:
     check("沒有候選時不呼叫 LLM 且回 None",
           llm_advisor.advise_finding(finding, {"cwe": [], "cra": [], "iec": []}) is None)
     check("suggestions 為 None 時也回 None",
           llm_advisor.advise_finding(finding, None) is None)
 finally:
-    llm_advisor.ask_gemini = original_ask
+    llm_advisor.ask_llm = original_ask
 
 captured = {}
 
@@ -210,11 +210,11 @@ def _fake_ask(system_instruction, prompt):
     return "【CRA 關聯】Annex I Part I (2)(a) 要求保護傳輸資料的機密性。另見 Article 54。"
 
 
-llm_advisor.ask_gemini = _fake_ask
+llm_advisor.ask_llm = _fake_ask
 try:
     advice = llm_advisor.advise_finding(finding, {"cwe": FAKE_CWE, "cra": FAKE_CRA})
 finally:
-    llm_advisor.ask_gemini = original_ask
+    llm_advisor.ask_llm = original_ask
 
 check("有候選時回傳研判結果", advice is not None)
 if advice:
@@ -238,11 +238,11 @@ def _capture_iec_only(system_instruction, prompt):
     return "【62443 對應】IEC 62443-4-2 CR 1.7 要求可設定的密碼強度。"
 
 
-llm_advisor.ask_gemini = _capture_iec_only
+llm_advisor.ask_llm = _capture_iec_only
 try:
     iec_advice = llm_advisor.advise_finding(finding, {"cwe": [], "cra": [], "iec": FAKE_IEC})
 finally:
-    llm_advisor.ask_gemini = original_ask
+    llm_advisor.ask_llm = original_ask
 
 check("只有 IEC 候選時仍會呼叫 LLM", iec_advice is not None)
 if iec_advice:
@@ -252,14 +252,14 @@ if iec_advice:
           iec_advice["unsupported_citations"] == [],
           str(iec_advice["unsupported_citations"]))
 
-# ask_gemini 回 None（沒金鑰/API 掛掉）時，整條路徑要安靜降級成 None，
+# ask_llm 回 None（沒金鑰/API 掛掉）時，整條路徑要安靜降級成 None，
 # 而不是丟例外把報告產生流程一起帶走。
-llm_advisor.ask_gemini = lambda system_instruction, prompt: None
+llm_advisor.ask_llm = lambda system_instruction, prompt: None
 try:
     check("LLM 呼叫失敗時降級為 None",
           llm_advisor.advise_finding(finding, {"cwe": FAKE_CWE, "cra": FAKE_CRA}) is None)
 finally:
-    llm_advisor.ask_gemini = original_ask
+    llm_advisor.ask_llm = original_ask
 
 print()
 if failures:

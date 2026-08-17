@@ -98,7 +98,7 @@ def render_report_from_merged(
 def render_report(findings: list[dict], scan_metadata: dict, use_llm: bool = False) -> str:
     """
     use_llm=True 時，待複核項目會額外附上一段 LLM 依檢索結果寫出的
-    研判建議（需要 GEMINI_API_KEY，見 core/llm_advisor.py）。預設關閉，
+    研判建議（需要 ANTHROPIC_API_KEY，見 core/llm_advisor.py）。預設關閉，
     沒開的時候報告內容跟以前完全一樣。
 
     獨立執行時（CLI 的 report.py，或還沒算過 merged_findings 的呼叫端）
@@ -159,7 +159,7 @@ def main():
     args = parser.parse_args()
 
     if args.llm and not llm_advisor.is_available():
-        print(f"[report] 警告：--llm 已開啟，但 google-genai 未安裝或未設定 "
+        print(f"[report] 警告：--llm 已開啟，但 anthropic 未安裝或未設定 "
               f"{llm_advisor.API_KEY_ENV}，本次報告不會有 LLM 研判段落。")
 
     findings_path = Path(args.findings_json)
