@@ -15,6 +15,23 @@ pentestgpt 相依套件的獨立 venv）裡照常運作，不會因為一個用�
 core/report.py 仍然從這裡 re-export 這兩個函式，維持既有呼叫端
 （core/project.py 的 report.merge_findings_and_analysis(...)）不用改。
 """
+from core.common import SEVERITY_ORDER
+
+
+def sort_by_risk_level(merged_findings: list[dict]) -> list[dict]:
+    """
+    依 risk_level 由高到低（critical → high → medium → low → info）排序。
+
+    排序鍵用 risk_level（分析層的判定）而不是 severity（收集層的原始值），
+    因為報告與網頁上「風險等級」欄位顯示的就是 risk_level——排序依據跟
+    畫面上看到的數值必須是同一個，否則使用者會看到「HIGH 排在 CRITICAL
+    前面」這種看起來像壞掉的結果。
+
+    sorted() 是穩定排序，同風險等級的項目維持原本的先後順序（也就是
+    nmap XML 裡的連接埠遞增順序），所以這只是把高風險往前提，不會把
+    同一級之間本來就合理的排列打散。
+    """
+    return sorted(merged_findings, key=lambda f: SEVERITY_ORDER.get(f.get("risk_level"), 9))
 
 
 def merge_findings_and_analysis(findings: list[dict], analysis_results: list[dict]) -> list[dict]:
@@ -30,6 +47,12 @@ def merge_findings_and_analysis(findings: list[dict], analysis_results: list[dic
     看起來像知識庫連不上，實際上是候選在合併這一步就被丟掉了。
     Jinja2 對未定義變數預設是靜默當成 falsy，不會報錯，所以這種
     「少複製一個欄位」的漏洞完全不會有任何錯誤訊息。
+
+    回傳前依風險等級由高到低排序（見 sort_by_risk_level()）。排在這一層
+    做而不是各呈現層各自排，是因為報告樣板、Web 前端的 Findings 頁面、
+    pentest_planner 的要求對應全部都吃這同一份 merged_findings——在源頭
+    排好，三邊的呈現順序自然一致，不需要（也不會忘記）在每個呼叫端
+    各補一次排序。
     """
     analysis_by_id = {a["finding_id"]: a for a in analysis_results}
 
@@ -45,7 +68,7 @@ def merge_findings_and_analysis(findings: list[dict], analysis_results: list[dic
             "rag_suggestions": analysis.get("rag_suggestions"),
             "llm_advice": analysis.get("llm_advice"),
         })
-    return merged
+    return sort_by_risk_level(merged)
 
 
 def group_by_target(merged_findings: list[dict]) -> list[dict]:
@@ -54,8 +77,13 @@ def group_by_target(merged_findings: list[dict]) -> list[dict]:
     底下列出該目標的所有項目」的方式呈現，不用在每一行都重複印一次
     target——三個掃描目標（IP/firmware/URL）各自可能產生好幾筆
     finding，攤平列表時 target 欄位會重複很多次，分組後可讀性更好。
-    保留 target 第一次出現的順序（不重新排序），對應原本 findings
-    出現的先後。
+
+    保留 target 第一次出現的順序（這裡不再自己排一次）。因為傳進來的
+    merged_findings 已經是依風險由高到低排好的（見
+    merge_findings_and_analysis()），dict 會記住插入順序，所以「第一次
+    出現」自然就等於「該目標最高風險的那一筆出現的位置」——含 critical
+    的目標會排在只有 info 的目標前面，群組內部也已經是高到低，不需要
+    在這裡重複排序邏輯。
     """
     groups: dict[str, list[dict]] = {}
     for item in merged_findings:
