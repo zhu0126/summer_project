@@ -8,7 +8,7 @@ jinja2，但這裡的兩個函式（merge_findings_and_analysis / group_by_targe
 只是單純的 dict 合併與分組，沒有任何理由要因為「之後可能會拿去 render 報告」
 就強迫呼叫端也一起載入 jinja2。webapp 後端跟 core/pentest_planner.py 都只需要
 合併好的 merged_findings（給 Findings/Compliance 頁面、給測試計畫用要求對應），
-完全不需要報告樣板——拆開後這些呼叫端可以在沒裝 jinja2 的環境（例如只裝了
+完全不需要報告樣板——拆開後這些呼叫x端可以在沒裝 jinja2 的環境（例如只裝了
 pentestgpt 相依套件的獨立 venv）裡照常運作，不會因為一個用不到的 import
 就 ModuleNotFoundError。
 
