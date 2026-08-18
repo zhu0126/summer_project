@@ -428,7 +428,7 @@
   .badge.status-needs_review { color: var(--risk-medium); border-color: var(--risk-medium); }
   .badge.status-no_match { color: var(--ok); border-color: var(--ok); }
 
-  /* ---- PentestGPT 測試計畫 ---- */
+  /* ---- 自動化滲透測試計畫 ---- */
   .pentest-plan-panel {
     background: var(--panel); border: 1px solid var(--border); border-radius: 4px;
     padding: 14px 16px; margin-bottom: 24px;
@@ -463,7 +463,6 @@
     font-family: "IBM Plex Mono", monospace; font-size: 11.5px; color: #C3D2EF;
     white-space: pre-wrap; word-break: break-all; margin: 0;
   }
-  .plan-card .plan-legacy-instruction { font-size: 12px; color: var(--text-dim); margin-top: 4px; }
 
   /* ---- Compliance ---- */
   .compliance-section { margin-bottom: 24px; }
@@ -729,7 +728,7 @@
       <div class="tab-panel" id="tab-compliance" hidden>
         <div class="pentest-plan-panel">
           <div class="pentest-plan-head">
-            <h3>PentestGPT 測試計畫</h3>
+            <h3>自動化滲透測試計畫</h3>
             <button type="button" id="generate-plan-btn">產生測試計畫</button>
           </div>
           <div class="pentest-plan-warning">⚠️ 指令只會顯示在畫面上，不會自動執行。這些指令會對目標實際發動滲透測試，只能對你明確有權限測試的目標手動執行。</div>
@@ -819,16 +818,19 @@ document.getElementById("compliance-content").addEventListener("click", (e) => {
   }
 });
 
-// ---- PentestGPT 測試計畫 ----
+// ---- 自動化滲透測試計畫 ----
 // 只產生計畫與指令、顯示在畫面上，不會呼叫任何會真的發動攻擊的 API——
 // 跟 core/pentest_planner.py 的定位一致：這裡是給人看、給人複製指令的地方。
+// 指令呼叫的是 scanners/claude_pentest_scan.py（Claude Code 後端），複製到
+// 終端機執行前務必確認目標與授權範圍正確——--i-am-authorized 是明確的
+// 執行閘門，不是這個頁面的按鈕能代為決定的事。
 
 function renderPentestPlan(plan) {
   const content = document.getElementById("pentest-plan-content");
   content.innerHTML = "";
 
   if (!plan || plan.length === 0) {
-    content.innerHTML = `<div class="empty-note">本次掃描沒有可供 PentestGPT 嘗試的活目標（network/webapp）項目。</div>`;
+    content.innerHTML = `<div class="empty-note">本次掃描沒有可供自動化滲透測試嘗試的活目標（network/webapp）項目。</div>`;
     return;
   }
 
@@ -840,7 +842,6 @@ function renderPentestPlan(plan) {
       ? `${escapeHtml(req.id)}（來源：${escapeHtml(req.source)}）`
       : "（無明確對應要求，用通用目標）";
     const objMark = item.objective_from_llm ? "" : "（樣板，非 LLM 產生）";
-    const cmd = item.commands || {};
     card.innerHTML = `
       <div class="plan-head">
         <span class="plan-title">${escapeHtml(item.title)}</span>
@@ -849,11 +850,8 @@ function renderPentestPlan(plan) {
       <div class="plan-meta">目標：<span class="mono">${escapeHtml(item.target)}</span> ・ 來源：${escapeHtml(SOURCE_LABEL[item.source] || item.source)}</div>
       <div class="plan-meta">對應要求：${reqLine}</div>
       <div class="plan-objective">測試目標${objMark}：${escapeHtml(item.objective)}</div>
-      <div class="plan-cmd-label">Autonomous（自動嘗試，需 Claude Code / Codex CLI 後端）</div>
-      <pre class="plan-cmd">${escapeHtml(cmd.autonomous || "")}</pre>
-      <div class="plan-cmd-label">Legacy（互動模式，可用 Gemini / Ollama；啟動後把下面的測試目標貼進去）</div>
-      <pre class="plan-cmd">${escapeHtml(cmd.legacy_cmd || "")}</pre>
-      <div class="plan-legacy-instruction">貼入內容：${escapeHtml(cmd.legacy_instruction || "")}</div>
+      <div class="plan-cmd-label">執行指令（需先安裝並登入 Claude Code）</div>
+      <pre class="plan-cmd">${escapeHtml(item.command || "")}</pre>
     `;
     content.appendChild(card);
   });

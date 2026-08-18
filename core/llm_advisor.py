@@ -402,7 +402,7 @@ def derive_iec_remediation(finding: dict, article_no: str, title: str, group: st
 
 PENTEST_OBJECTIVE_SYSTEM_INSTRUCTION = """You are helping plan an AUTHORIZED penetration test of an IoT product, on targets the operator is explicitly permitted to test. You are given one scan finding and, optionally, a security requirement (from IEC 62443-4-2 or the EU CRA) that the finding may relate to.
 
-Your job: produce ONE concrete, testable objective — what a penetration tester, or an autonomous pentest agent such as PentestGPT, should attempt or verify against the LIVE target in order to determine whether the requirement is actually satisfied.
+Your job: produce ONE concrete, testable objective — what a penetration tester, or an autonomous pentest agent, should attempt or verify against the LIVE target in order to determine whether the requirement is actually satisfied.
 
 Rules:
 1. Output a test OBJECTIVE, not a restatement of the requirement and not a specific exploit payload or command. Describe what to verify or attempt (for example: confirm whether the Telnet service on port 23 allows access without authentication and whether default or weak credentials are accepted), and leave the exact commands for the pentest tool to decide.
@@ -415,12 +415,12 @@ Rules:
 def derive_test_objective(finding: dict, requirement: dict | None) -> str | None:
     """
     把一筆 finding（可選地加上它對應到的法規要求）交給 Claude，推導出
-    一句「該對這個活目標驗證/嘗試什麼」的測試目標，作為 PentestGPT 的
-    --instruction 注入點。
+    一句「該對這個活目標驗證/嘗試什麼」的測試目標，作為
+    scanners/claude_pentest_scan.py 的 --objective 注入點。
 
     為什麼需要這一步：法規知識庫存的是「要求」（元件該具備什麼能力），
     不是「測試步驟」。這個函式做的是 requirement → 可測試目標 的轉換，
-    真正的滲透手法（how）交給 PentestGPT 自己決定，不在這裡也不在法規裡。
+    真正的滲透手法（how）交給 pentest agent 自己決定，不在這裡也不在法規裡。
 
     回傳 None 代表 LLM 這條路徑不可用（沒金鑰/沒套件/呼叫失敗），呼叫端
     應退回用 finding 本身資訊組出的通用目標，不能因此讓整份測試計畫產不出來。

@@ -222,7 +222,7 @@ def generate_pentest_plan(use_llm: bool = Form(True)):
     """
     Compliance 頁「產生測試計畫」按鈕呼叫的端點：對最近一次完成的掃描結果
     （_job["result"]["merged_findings"]）跑 pentest_planner.build_test_plan()，
-    回傳給前端直接顯示 pentestgpt 指令。
+    回傳給前端直接顯示可複製執行的 scanners/claude_pentest_scan.py 指令。
 
     只讀取既有掃描結果，不會觸發新掃描；build_test_plan() 本身只產生「計畫
     與指令字串」，不執行任何攻擊性行為，所以這裡不需要跟 /api/scan 一樣搶
