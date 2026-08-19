@@ -400,6 +400,123 @@ def derive_iec_remediation(finding: dict, article_no: str, title: str, group: st
     )
 
 
+# 待複核卡片用的「弱點名稱／弱點原因／修補建議」，一次讀 CWE/IEC/CRA 三個
+# 知識庫的候選一起生成——跟上面三個 derive_*_remediation() 的差異在於：
+# 那些各自只看單一知識庫的候選，產出一句話行動建議；這裡「弱點原因」要
+# 基於 CWE、「修補建議」要同時引用 IEC 與 CRA 條號，三者必須在同一次
+# 呼叫裡互相看得到彼此，不然修補建議沒辦法真的「參考」到 IEC/CRA 條文
+# （「未合格法規」欄位本身不需要 LLM，呈現層直接取候選的 article_no）。
+FINDING_SUMMARY_CACHE_PATH = Path(__file__).resolve().parent / "finding_summary_cache.json"
+
+FINDING_SUMMARY_SYSTEM_INSTRUCTION = """You are helping a product security engineer turn one scan finding, plus up to three semantic-search candidates (a CWE weakness entry, an IEC 62443-4-2 component requirement, and a CRA article), into a compliance-review card for a human reviewer.
+
+You are given: (1) one scan finding, and (2) zero to three reference candidates already matched to it by semantic search — each candidate is a loose match, not a certainty, and any of the three may be missing.
+
+Rules:
+1. Output exactly three labeled sections, in this exact order, each on its own line followed by its content on the same line, nothing before the first label or after the last section, no markdown, no bullet points:
+【弱點名稱】一個簡短、具體的弱點名稱（例如「Telnet 服務允許未加密登入」），讓讀者不用看細節就知道問題是什麼；不要只複製服務名稱或掃描項目原始標題，也不要寫成一整句話。
+【弱點原因】以繁體中文說明這筆發現為什麼是個弱點，內容要以提供的 CWE 說明為根據，但用自己的話重新解釋、不要逐字翻譯，且全文不可出現任何 CWE 編號（例如不可寫出「CWE-319」字樣）。若沒有提供 CWE 候選，改依 finding 本身資訊合理說明風險成因，並在句尾加註「（無明確對應的弱點分類）」。限一到兩句話。
+【修補建議】具體可執行的修補動作，必須明確引用提供的 IEC 62443-4-2 條號與 CRA 條號（兩者都有提供時兩者都要提到；只提供其中一種就只引用該種；兩者都沒有提供則只依 finding 本身給出建議，不得捏造條號）。限一到兩句話，不超過 120 字。
+2. Never invent a CWE ID, IEC clause number, or CRA article number that was not given to you below.
+3. Semantic search is not guaranteed to be accurate — if a candidate's connection to this finding looks weak, still write the section but phrase it cautiously (e.g. 「建議確認…」) rather than asserting certainty.
+4. Do not add any section beyond the three above, and do not skip a section even when a candidate is missing."""
+
+_FINDING_SUMMARY_LABELS = ("弱點名稱", "弱點原因", "修補建議")
+_FINDING_SUMMARY_SECTION_PATTERN = re.compile(
+    r"【(弱點名稱|弱點原因|修補建議)】(.*?)(?=【(?:弱點名稱|弱點原因|修補建議)】|$)", re.DOTALL
+)
+
+
+def _load_finding_summary_cache() -> dict:
+    return _load_json_cache(FINDING_SUMMARY_CACHE_PATH)
+
+
+def _save_finding_summary_cache(cache: dict) -> None:
+    _save_json_cache(FINDING_SUMMARY_CACHE_PATH, cache)
+
+
+def _parse_finding_summary(answer: str) -> dict | None:
+    sections = {m.group(1): m.group(2).strip() for m in _FINDING_SUMMARY_SECTION_PATTERN.finditer(answer or "")}
+    if not all(label in sections for label in _FINDING_SUMMARY_LABELS):
+        return None
+    return {
+        "weakness_name": sections["弱點名稱"],
+        "weakness_reason": sections["弱點原因"],
+        "remediation": sections["修補建議"],
+    }
+
+
+def _finding_summary_prompt(finding: dict, cwe: dict | None, iec: dict | None, cra: dict | None) -> str:
+    detail = finding.get("detail") or {}
+    detail_lines = "\n".join(
+        f"- {k}: {v}" for k, v in detail.items() if v not in (None, "", [], {})
+    )
+
+    if cwe:
+        cwe_block = f"# Candidate CWE Entry\n{cwe.get('cwe_id', '')} — {cwe.get('name', '')}\n{cwe.get('description', '')}\n"
+    else:
+        cwe_block = "# Candidate CWE Entry\n(no candidate retrieved)\n"
+
+    if iec:
+        iec_text = (iec.get("text") or "")[:CRA_REMEDIATION_INPUT_MAX_CHARS]
+        iec_block = f"# Candidate IEC 62443-4-2 Requirement\n{iec.get('article_no', '')} — {iec.get('title', '')}\n{iec_text}\n"
+    else:
+        iec_block = "# Candidate IEC 62443-4-2 Requirement\n(no candidate retrieved)\n"
+
+    if cra:
+        cra_text = (cra.get("text") or "")[:CRA_REMEDIATION_INPUT_MAX_CHARS]
+        cra_block = f"# Candidate CRA Article\n{cra.get('article_no', '')} — {cra.get('title', '')}\n{cra_text}\n"
+    else:
+        cra_block = "# Candidate CRA Article\n(no candidate retrieved)\n"
+
+    return f"""# Scan Finding
+
+- Title: {finding.get('title', '')}
+- Category: {finding.get('category', '')} (source tool: {finding.get('source', '')})
+- Target: {finding.get('target', '')}
+{detail_lines}
+
+{cwe_block}
+{iec_block}
+{cra_block}
+"""
+
+
+def derive_finding_summary(finding: dict, cwe: dict | None, iec: dict | None, cra: dict | None) -> dict | None:
+    """
+    把 finding 本身 + CWE/IEC/CRA 三個知識庫信心最高的候選一起交給 Claude，
+    產出 Compliance 頁待複核卡片要用的 {"weakness_name", "weakness_reason",
+    "remediation"} 三段文字（「未合格法規」欄位不經過 LLM，呼叫端直接取
+    iec/cra 候選的 article_no 顯示）。
+
+    回傳 None 代表 LLM 這條路徑不可用、或回覆格式不符預期（缺 label），
+    呼叫端應退回用既有欄位（title / 各 KB 的 text_zh）組出等效內容，
+    不能讓卡片開天窗——跟本檔案其他 derive_*() 一致的降級原則。
+    """
+    cache = _load_finding_summary_cache()
+    cache_key = "::".join([
+        _finding_signature(finding),
+        cwe.get("cwe_id", "") if cwe else "",
+        iec.get("article_no", "") if iec else "",
+        cra.get("article_no", "") if cra else "",
+    ])
+    if cache_key in cache:
+        return cache[cache_key]
+
+    answer = ask_llm(FINDING_SUMMARY_SYSTEM_INSTRUCTION, _finding_summary_prompt(finding, cwe, iec, cra))
+    if answer is None:
+        return None
+
+    parsed = _parse_finding_summary(answer)
+    if parsed is None:
+        print("[llm_advisor] 警告：finding summary 回覆格式不符預期，略過")
+        return None
+
+    cache[cache_key] = parsed
+    _save_finding_summary_cache(cache)
+    return parsed
+
+
 PENTEST_OBJECTIVE_SYSTEM_INSTRUCTION = """You are helping plan an AUTHORIZED penetration test of an IoT product, on targets the operator is explicitly permitted to test. You are given one scan finding and, optionally, a security requirement (from IEC 62443-4-2 or the EU CRA) that the finding may relate to.
 
 Your job: produce ONE concrete, testable objective — what a penetration tester, or an autonomous pentest agent, should attempt or verify against the LIVE target in order to determine whether the requirement is actually satisfied.

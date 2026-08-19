@@ -1138,29 +1138,36 @@ function adoptCandidate(findingId, group, id, buttonEl) {
   }
 }
 
-// 每組（CWE/IEC/CRA）分析層現在只送信心最高的 1 筆過來，這裡只需要
-// 呈現「一句話修補建議 + 對應編號」，不再需要分數徽章或「查看更多」
-// 展開機制——候選清單已經收斂成單一結論，不用讓人逐一比較篩選。
-function renderRemediationSection(label, item, idField, fallbackFn, opts) {
-  opts = opts || {};
-  if (!item) {
-    return `<div class="candidate-group"><div class="cg-label">${escapeHtml(label)}</div>`
-      + `<div class="empty-note">語意檢索沒有找到相關候選</div></div>`;
+// 待複核卡片的內容欄位：弱點名稱／弱點原因／未合格法規／修補建議。
+// 前三段（名稱、原因、修補建議）由後端 analysis.py 呼叫
+// llm_advisor.derive_finding_summary() 一次讀 CWE/IEC/CRA 三個知識庫的
+// 候選產生（f.finding_summary），「未合格法規」不需要 LLM，直接列出
+// IEC/CRA 候選各自的條號。LLM 這條路徑不可用時 f.finding_summary 會是
+// null，這裡退回用候選本身的欄位組出還算堪用的內容，不讓卡片開天窗。
+function renderRegulationRefs(findingId, iec, cra) {
+  const rows = [];
+  if (iec && iec.article_no) rows.push([iec.article_no, "iec"]);
+  if (cra && cra.article_no) rows.push([cra.article_no, "cra"]);
+
+  if (rows.length === 0) {
+    return `<div class="empty-note">語意檢索沒有找到相關候選</div>`;
   }
 
-  const id = item[idField] || "";
-  const remediation = item.text_zh || fallbackFn(item) || "";
-  const adopted = opts.findingId && isCandidateAdopted(opts.findingId, opts.group, id);
-  const adoptControl = opts.findingId
-    ? (adopted
-        ? `<span class="candidate-confirmed">✓ 已確認</span>`
-        : `<button type="button" class="adopt-btn" data-finding="${escapeHtml(opts.findingId)}" data-group="${escapeHtml(opts.group)}" data-id="${escapeHtml(id)}">採納 / 綁定</button>`)
-    : "";
+  return rows.map(([id, group]) => {
+    const adopted = findingId && isCandidateAdopted(findingId, group, id);
+    const adoptControl = findingId
+      ? (adopted
+          ? `<span class="candidate-confirmed">✓ 已確認</span>`
+          : `<button type="button" class="adopt-btn" data-finding="${escapeHtml(findingId)}" data-group="${escapeHtml(group)}" data-id="${escapeHtml(id)}">採納 / 綁定</button>`)
+      : "";
+    return `<div class="candidate-item"><span class="cid">${escapeHtml(id)}</span>${adoptControl}</div>`;
+  }).join("");
+}
 
+function renderCandidateBlock(label, valueHtml) {
   return `<div class="candidate-group">
     <div class="cg-label">${escapeHtml(label)}</div>
-    <div class="candidate-remediation">${escapeHtml(remediation)}</div>
-    <div class="candidate-item"><span class="cid">${escapeHtml(id)}</span>${adoptControl}</div>
+    ${valueHtml}
   </div>`;
 }
 
@@ -1217,18 +1224,28 @@ function renderCompliance(findings, processRequirements) {
       card.className = "review-card";
 
       // 分析層現在只送信心最高的 1 筆候選過來（見 core/analysis.py 的
-      // RAG_SUGGESTION_TOP_K），每組直接顯示「一句話修補建議 + 對應編號」。
+      // RAG_SUGGESTION_TOP_K）。
       const cwe = (s.cwe && s.cwe[0]) || null;
       const iec = (s.iec && s.iec[0]) || null;
       const cra = (s.cra && s.cra[0]) || null;
+      const summary = f.finding_summary || null;
 
-      const candidatesHtml =
-        renderRemediationSection("CWE", cwe, "cwe_id", c => c.name,
-          { findingId: f.finding_id, group: "cwe" }) +
-        renderRemediationSection("IEC 62443-4-2", iec, "article_no", c => c.title,
-          { findingId: f.finding_id, group: "iec" }) +
-        renderRemediationSection("CRA", cra, "article_no", c => c.text || c.title,
-          { findingId: f.finding_id, group: "cra" });
+      // finding_summary 是後端一次呼叫 LLM 產生的「弱點名稱／弱點原因／
+      // 修補建議」；LLM 路徑不可用時退回用候選本身的欄位組出堪用內容，
+      // 避免卡片開天窗（見 core/llm_advisor.derive_finding_summary() 的
+      // 降級說明）。
+      const weaknessName = (summary && summary.weakness_name) || f.title;
+      const weaknessReason = (summary && summary.weakness_reason)
+        || (cwe && (cwe.text_zh || cwe.name))
+        || "（語意檢索沒有找到相關候選，無法判斷弱點原因）";
+      const remediation = (summary && summary.remediation)
+        || [iec && iec.text_zh, cra && cra.text_zh].filter(Boolean).join("；")
+        || "（AI 修補建議尚未產生，請人工複核）";
+
+      const cardHtml =
+        renderCandidateBlock("弱點原因", `<div class="candidate-remediation">${escapeHtml(weaknessReason)}</div>`) +
+        renderCandidateBlock("未合格法規", renderRegulationRefs(f.finding_id, iec, cra)) +
+        renderCandidateBlock("修補建議", `<div class="candidate-remediation">${escapeHtml(remediation)}</div>`);
 
       const llmHtml = f.llm_advice ? `
         <div class="llm-advice">
@@ -1238,11 +1255,11 @@ function renderCompliance(findings, processRequirements) {
 
       card.innerHTML = `
         <summary>
-          <span class="review-title">${escapeHtml(f.title)}（${escapeHtml(f.target)}）</span>
+          <span class="review-title">${escapeHtml(weaknessName)}（${escapeHtml(f.target)}）</span>
           <span class="badge status-${f.status} review-status-badge">${STATUS_LABEL[f.status] || f.status}</span>
         </summary>
         <div class="review-body">
-          ${candidatesHtml}
+          ${cardHtml}
           ${llmHtml}
         </div>
       `;

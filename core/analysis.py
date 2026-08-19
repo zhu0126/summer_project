@@ -21,7 +21,11 @@ matched**，一律維持 status="needs_review"，只附上 CWE/IEC/CRA 各
 跟下游的關係：report.py 呼叫的是 analyze_findings()，回傳格式
 比舊版多了 rag_suggestions 這個欄位（規則已比對到時是 None，
 規則沒比對到時是 {"cwe": [...], "iec": [...], "cra": [...]}），
-report.py 的樣板要相應調整才能呈現這份候選建議。
+report.py 的樣板要相應調整才能呈現這份候選建議。needs_review 項目
+另外多一個 finding_summary 欄位（{"weakness_name", "weakness_reason",
+"remediation"} 或 None），是把 rag_suggestions 三個知識庫的候選再讀一次
+Claude 產出的卡片內容，供 webapp Compliance 頁待複核卡片使用，
+見 llm_advisor.derive_finding_summary()。
 
 三個知識庫的分工：CWE 是弱點分類（這是什麼問題），IEC 62443-4-2 是
 元件層級的技術要求（技術上該具備什麼能力），CRA 是法規義務（法律上
@@ -75,11 +79,13 @@ try:
     from core.llm_advisor import derive_cra_remediation
     from core.llm_advisor import derive_cwe_remediation
     from core.llm_advisor import derive_iec_remediation
+    from core.llm_advisor import derive_finding_summary
 except ImportError:
     llm_advise_finding = None
     derive_cra_remediation = None
     derive_cwe_remediation = None
     derive_iec_remediation = None
+    derive_finding_summary = None
     print("[analysis] 警告：llm_advisor 無法匯入，LLM 研判建議停用")
 
 # 每個知識庫只取信心最高的 1 筆——不做信心分數過濾（實測證明單一門檻
@@ -247,6 +253,31 @@ def _llm_advice(finding: dict, suggestions: dict) -> dict | None:
         return None
 
 
+def _finding_summary(finding: dict, suggestions: dict) -> dict | None:
+    """
+    Compliance 頁待複核卡片要用的「弱點名稱／弱點原因／修補建議」，讀
+    suggestions 裡剛檢索出的 CWE/IEC/CRA 各信心最高 1 筆候選（跟 llm_advice
+    吃同一份，理由同 _llm_advice()：呈現給人看的候選跟 LLM 實際讀到的
+    候選必須一致）。跟 text_zh（各知識庫獨立的一句話行動建議）不是同一
+    份資料，是額外呼叫一次 Claude 產出的三段式卡片內容，見
+    llm_advisor.derive_finding_summary() 的說明。
+
+    不像 llm_advice 是 use_llm=True 才呼叫——這裡跟 _with_cwe_remediation
+    等 text_zh 產生邏輯一樣預設就會跑，因為它現在是待複核卡片的主要內容，
+    不是附加的選用研判。任何失敗都回 None，呼叫端退回用既有欄位組卡片。
+    """
+    if derive_finding_summary is None:
+        return None
+    cwe = (suggestions.get("cwe") or [None])[0]
+    iec = (suggestions.get("iec") or [None])[0]
+    cra = (suggestions.get("cra") or [None])[0]
+    try:
+        return derive_finding_summary(finding, cwe, iec, cra)
+    except Exception as e:
+        print(f"[analysis] 待複核卡片摘要產生失敗，略過（{e}）")
+        return None
+
+
 def _fallback_risk_level(finding: dict) -> str:
     """
     規則沒比對到、也沒有比對到已知 CVE 時（見 _cve_match()），needs_review
@@ -357,6 +388,7 @@ def analyze_finding(finding: dict, use_llm: bool = False) -> dict:
         "cwe_id": None,
         "confidence": None,
         "rag_suggestions": suggestions,
+        "finding_summary": _finding_summary(finding, suggestions),
         "llm_advice": _llm_advice(finding, suggestions) if use_llm else None,
     }
 
