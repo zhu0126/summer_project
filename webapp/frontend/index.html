@@ -1223,7 +1223,7 @@ function renderCompliance(findings, processRequirements) {
       const cra = (s.cra && s.cra[0]) || null;
 
       const candidatesHtml =
-        renderRemediationSection("CVE", cwe, "cwe_id", c => c.name,
+        renderRemediationSection("CWE", cwe, "cwe_id", c => c.name,
           { findingId: f.finding_id, group: "cwe" }) +
         renderRemediationSection("IEC 62443-4-2", iec, "article_no", c => c.title,
           { findingId: f.finding_id, group: "iec" }) +
