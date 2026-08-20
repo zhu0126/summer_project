@@ -1,0 +1,9 @@
+{
+  "CWE-942::webapp|zap|Content Security Policy (CSP) Header Not Set": "驗證是否需要在Web伺服器設定Content-Security-Policy標頭,以防止跨網域請求來自不信任的網域。",
+  "CWE-1390::webapp|zap|Weak Authentication Method": "確保此應用程式改用 HTTPS 加密連線傳輸認證憑證，或改採更強大的驗證機制如 OAuth 或 API 金鑰。",
+  "CWE-644::webapp|zap|HTTP Only Site": "啟用 HTTPS 並確保所有 HTTP 流量都被重定向至安全的加密連線，以防止通訊內容被竊聽或竄改。",
+  "CWE-409::firmware|binwalk|LZMA compressed data, properties: 0x5D, dictionary size: 33554432 bytes, uncompressed size: 5959006 bytes": "驗證韌體解壓縮程序是否對大型LZMA檔案設置解壓縮大小限制，防止解壓縮炸彈攻擊。",
+  "CWE-1285::firmware|binwalk|MySQL ISAM index file Version 7": "確認韌體中MySQL ISAM索引檔案是否使用了未驗證的索引偏移量，以防止越界讀取或資料損毀。",
+  "CWE-354::firmware|binwalk|JBOOT STAG header, image id: 5, timestamp 0x860CB153, image size: 99486104 bytes, image JBOOT checksum: 0x4000, header JBOOT checksum: 0x995B": "確認韌體映像檔案的 JBOOT 校驗和值（0x4000 與 0x995B）是否經過正確驗證，以偵測潛在的資料損毀或篡改。",
+  "CWE-599::network|nmap|tcp/22 ssh (OpenSSH 10.3p1 Debian 5)": "驗證此 OpenSSH 版本是否存在已知的憑證驗證或金鑰交換漏洞，並考慮升級至最新版本以確保安全通訊。"
+}

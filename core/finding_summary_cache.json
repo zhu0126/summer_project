@@ -1,0 +1,22 @@
+{
+  "network|nmap|tcp/22 ssh (OpenSSH 10.3p1 Debian 5)::CWE-599::IEC 62443-4-2 CR 1.10::Annex III Class I 10.": {
+    "weakness_name": "SSH 服務版本公開曝露",
+    "weakness_reason": "掃描發現 SSH 服務正在運行且版本資訊對外可見（OpenSSH 10.3p1 Debian 5），未能隱蔽服務簽名，攻擊者可利用已知版本的漏洞進行針對性攻擊（無明確對應的弱點分類）。",
+    "remediation": "建議依 IEC 62443-4-2 CR 1.10 要求，配置 SSH 服務限制版本資訊洩露，並在驗證失敗時避免向客戶端提示具體原因，降低攻擊者獲取系統特徵的機會。定期更新至最新穩定版本並進行安全評估。"
+  },
+  "firmware|binwalk|LZMA compressed data, properties: 0x5D, dictionary size: 33554432 bytes, uncompressed size: 5959006 bytes::CWE-409::IEC 62443-4-2 CR 4.2::Annex I Part I (2)(g)": {
+    "weakness_name": "固件中存在高度壓縮資料且解壓尺寸過大",
+    "weakness_reason": "掃描偵測到固件內含高度壓縮的 LZMA 資料，解壓後大小為 5.9 MB，遠大於壓縮後的尺寸。此類高壓縮比的資料可能導致系統資源耗盡（如記憶體不足或處理器過載），造成拒絕服務風險，特別是在資源受限的嵌入式設備上。",
+    "remediation": "建議確認固件解壓機制是否實施了壓縮比上限驗證與記憶體配額限制，防止惡意或異常的高度壓縮資料導致系統崩潰；同時根據 IEC 62443-4-2 CR 4.2 要求確保固件卸載時能完整清除記憶體中的解壓資料，避免敏感資訊外洩。"
+  },
+  "firmware|binwalk|MySQL ISAM index file Version 7::CWE-1285::IEC 62443-4-2 CR 7.5::Annex III Class I 7.": {
+    "weakness_name": "韌體中包含 MySQL ISAM 索引檔案遺留物",
+    "weakness_reason": "掃描發現韌體內含 MySQL ISAM 索引檔案（Version 7），此類資料庫索引結構若未經適當驗證即被解析使用，可能遭受攻擊者利用格式異常或偽造的索引資料進行注入或記憶體存取錯誤，導致系統崩潰或資訊洩露（無明確對應的弱點分類）。",
+    "remediation": "建議確認該索引檔案是否為必要元件；若為遺留檔案應予移除，若為必要則應實施嚴格的檔案格式驗證機制，確保索引結構的完整性與合法性。"
+  },
+  "firmware|binwalk|JBOOT STAG header, image id: 5, timestamp 0x860CB153, image size: 99486104 bytes, image JBOOT checksum: 0x4000, header JBOOT checksum: 0x995B::CWE-354::IEC 62443-4-2 HDR 3.14::Annex III Class I 8.": {
+    "weakness_name": "韌體 JBOOT 啟動頭完整性檢查值不正確或未驗證",
+    "weakness_reason": "掃描發現韌體中 JBOOT 啟動頭的檢查值（header checksum 0x995B）與預期值不符，表示啟動過程中用於驗證韌體完整性的機制可能存在驗證失效或計算錯誤的情況，導致系統無法可靠地偵測韌體是否遭到篡改或損毀。",
+    "remediation": "應根據 IEC 62443-4-2 HDR 3.14 的要求，在裝置啟動前實施完整的韌體完整性驗證機制；依據 CRA Annex III Class I 8 針對啟動管理器的要求，確保啟動過程中的所有完整性檢查值計算與驗證程序正確無誤，並考慮引入數位簽章等加強認證措施。"
+  }
+}
