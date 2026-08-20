@@ -38,7 +38,9 @@
 {% set matched_items = merged_findings | selectattr("status", "equalto", "matched") | list %}
 {% if matched_items %}
 {% for item in matched_items %}
-### [{{ item.risk_level | upper }}] {{ item.weakness_name or item.title }}（{{ item.target }}）
+### [{{ item.risk_level | upper }}] {{ item.weakness_name or item.title }}
+
+*目標：{{ item.target }}*
 
 - **建議**：{{ item.recommendation }}
 {% if item.cra_reference %}
@@ -65,7 +67,9 @@
 {% set weakness_reason = (summary.weakness_reason if summary else None) or ((cwe.text_zh or cwe.name) if cwe else None) or "（語意檢索沒有找到相關候選，無法判斷弱點原因）" %}
 {% set remediation = (summary.remediation if summary else None) or ([iec.text_zh if iec else None, cra.text_zh if cra else None] | select | join("；")) or "（AI 修補建議尚未產生，請人工複核）" %}
 
-### {{ weakness_name }}（{{ item.target }}）
+### {{ weakness_name }}
+
+*目標：{{ item.target }}*
 
 <div class="field-box">
 <div class="field-label">弱點原因</div>
