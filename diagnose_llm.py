@@ -10,7 +10,7 @@
 東西。這支腳本把那些沉默的分支逐一攤開來檢查。
 
 用法（在專案根目錄執行）：
-    python3 diagnose_llm.py
+    python3 diagnose_llm.py   
 """
 import os
 import sys
