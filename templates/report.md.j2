@@ -38,7 +38,7 @@
 {% set matched_items = merged_findings | selectattr("status", "equalto", "matched") | list %}
 {% if matched_items %}
 {% for item in matched_items %}
-### [{{ item.risk_level | upper }}] {{ item.title }}（{{ item.target }}）
+### [{{ item.risk_level | upper }}] {{ item.weakness_name or item.title }}（{{ item.target }}）
 
 - **建議**：{{ item.recommendation }}
 {% if item.cra_reference %}

@@ -414,7 +414,7 @@ You are given: (1) one scan finding, and (2) zero to three reference candidates 
 
 Rules:
 1. Output exactly three labeled sections, in this exact order, each on its own line followed by its content on the same line, nothing before the first label or after the last section, no markdown, no bullet points:
-【弱點名稱】一個簡短、具體的弱點名稱（例如「Telnet 服務允許未加密登入」），讓讀者不用看細節就知道問題是什麼；不要只複製服務名稱或掃描項目原始標題，也不要寫成一整句話。
+【弱點名稱】一個簡短、具體的弱點名稱（例如「Telnet 服務允許未加密登入」），讓讀者不用看細節就知道問題是什麼；不要只複製服務名稱或掃描項目原始標題，也不要寫成一整句話。不可包含 IP 位址、主機名稱、韌體／檔案名稱、URL、連接埠號或產品版本字串等識別特定目標的資訊，只描述弱點本身的類型。
 【弱點原因】以繁體中文說明這筆發現為什麼是個弱點，內容要以提供的 CWE 說明為根據，但用自己的話重新解釋、不要逐字翻譯，且全文不可出現任何 CWE 編號（例如不可寫出「CWE-319」字樣）。若沒有提供 CWE 候選，改依 finding 本身資訊合理說明風險成因，並在句尾加註「（無明確對應的弱點分類）」。限一到兩句話。
 【修補建議】具體可執行的修補動作，必須明確引用提供的 IEC 62443-4-2 條號與 CRA 條號（兩者都有提供時兩者都要提到；只提供其中一種就只引用該種；兩者都沒有提供則只依 finding 本身給出建議，不得捏造條號）。限一到兩句話，不超過 120 字。
 2. Never invent a CWE ID, IEC clause number, or CRA article number that was not given to you below.
@@ -515,6 +515,78 @@ def derive_finding_summary(finding: dict, cwe: dict | None, iec: dict | None, cr
     cache[cache_key] = parsed
     _save_finding_summary_cache(cache)
     return parsed
+
+
+
+# 不符合項目（matched）卡片標題用的弱點名稱，跟待複核卡片「弱點名稱」欄位
+# 呈現目的一致，但輸入資料不同：matched 項目沒有語意檢索候選可看，判定
+# 依據是規則比對（keyword_rules.py）或已知 CVE（analysis.py 的
+# _cve_match()）已經算出的 recommendation／cra_reference，直接把這兩段
+# 濃縮成一個一眼看出問題是什麼的簡短名稱，取代原本直接顯示
+# finding.title 這種給人比對用的技術識別字串（例如 "tcp/8000 http
+# (Uvicorn)"），本身並不是「問題是什麼」的敘述。
+WEAKNESS_NAME_CACHE_PATH = Path(__file__).resolve().parent / "weakness_name_cache.json"
+
+WEAKNESS_NAME_SYSTEM_INSTRUCTION = """You are helping a product security engineer turn one scan finding that has already been confirmed as non-compliant (matched by a fixed rule or a known CVE) into a short weakness name for a compliance report card.
+
+You are given: (1) one scan finding, and (2) the remediation advice and/or regulatory reference already determined for it.
+
+Rules:
+1. Output ONLY a short, specific weakness name in Traditional Chinese (zh-TW), at most 30 characters, that lets a reader understand what the problem is at a glance without reading further detail — for example "Telnet 服務允許未加密登入" rather than copying the finding's raw title or scan item name verbatim.
+2. Do NOT include any target-specific identifier in the name — no IP address, hostname, firmware/file name, URL, port number, or product/version string. Describe the class of weakness, not which device it was found on.
+3. Do not write a full sentence, do not add trailing punctuation, no markdown, no leading label, no explanation — output the name only."""
+
+
+def _load_weakness_name_cache() -> dict:
+    return _load_json_cache(WEAKNESS_NAME_CACHE_PATH)
+
+
+def _save_weakness_name_cache(cache: dict) -> None:
+    _save_json_cache(WEAKNESS_NAME_CACHE_PATH, cache)
+
+
+def derive_weakness_name(finding: dict, recommendation: str | None, cra_reference: str | None) -> str | None:
+    """
+    把已判定為 matched 的 finding，連同規則比對／CVE 比對已經算出的
+    recommendation、cra_reference 一起交給 Claude，濃縮成卡片標題用的
+    弱點名稱。cache key 只用 finding 特徵（category/source/title），
+    理由跟 CRA/CWE/IEC 修補建議快取一致：matched 判定依據（規則表／
+    CVE 資料）對同一種弱點是穩定的，跨掃描重複出現時不需要重新呼叫。
+
+    回傳 None 代表 LLM 這條路徑不可用，呼叫端應退回顯示 finding.title，
+    不能讓卡片標題開天窗——跟本檔案其他 derive_*() 一致的降級原則。
+    """
+    cache = _load_weakness_name_cache()
+    cache_key = _finding_signature(finding)
+    if cache_key in cache:
+        return cache[cache_key]
+
+    detail = finding.get("detail") or {}
+    detail_lines = "\n".join(
+        f"- {k}: {v}" for k, v in detail.items() if v not in (None, "", [], {})
+    )
+    basis_lines = "\n".join(line for line in [
+        f"- Remediation: {recommendation}" if recommendation else "",
+        f"- Regulatory reference: {cra_reference}" if cra_reference else "",
+    ] if line)
+
+    prompt = f"""# Scan Finding
+
+- Title: {finding.get('title', '')}
+- Category: {finding.get('category', '')} (source tool: {finding.get('source', '')})
+{detail_lines}
+
+# Determined basis (already confirmed non-compliant)
+{basis_lines if basis_lines else "(none provided)"}
+"""
+    answer = ask_llm(WEAKNESS_NAME_SYSTEM_INSTRUCTION, prompt)
+    if answer is None:
+        return None
+
+    result = answer.strip()
+    cache[cache_key] = result
+    _save_weakness_name_cache(cache)
+    return result
 
 
 PENTEST_OBJECTIVE_SYSTEM_INSTRUCTION = """You are helping plan an AUTHORIZED penetration test of an IoT product, on targets the operator is explicitly permitted to test. You are given one scan finding and, optionally, a security requirement (from IEC 62443-4-2 or the EU CRA) that the finding may relate to.

@@ -1190,9 +1190,14 @@ function renderCompliance(findings, processRequirements) {
     failItems.forEach(f => {
       const card = document.createElement("div");
       card.className = "fail-card";
+      // weakness_name 是後端 analysis.py 呼叫 llm_advisor.derive_weakness_name()
+      // 把規則/CVE 判定結果濃縮出的簡短弱點名稱，取代直接顯示 f.title 這種給人
+      // 比對用的技術識別字串（例如 "tcp/8000 http (Uvicorn)"）；LLM 路徑不可用
+      // 時 f.weakness_name 會是 null，退回顯示原始 title，不讓卡片標題開天窗。
+      const weaknessName = f.weakness_name || f.title;
       card.innerHTML = `
         <div class="fail-head">
-          <span class="fail-title">${escapeHtml(f.title)}</span>
+          <span class="fail-title">${escapeHtml(weaknessName)}</span>
           ${riskBadge(f.risk_level)}
         </div>
         <div class="fail-target">目標：${escapeHtml(f.target)} ・ 來源：${escapeHtml(SOURCE_LABEL[f.source] || f.source)}</div>
