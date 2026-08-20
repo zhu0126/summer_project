@@ -1,3 +1,0 @@
-{
-  "network|nmap|tcp/8000 http (Uvicorn)": "未加密的 HTTP 傳輸"
-}
