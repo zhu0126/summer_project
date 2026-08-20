@@ -19,3 +19,13 @@ md_to_pdf/report_*.pdf
 # IEC 62443 是付費標準，解析出來的 json 含標準原文，不可進版控或散布。
 # （CWE/CRA 的資料檔沒有這個限制，來源本身就是公開全文。）
 iec_kb/iec_data/
+
+# LLM 依「單筆 finding」產出的修補建議/摘要快取：內容取決於實際掃描到
+# 什麼、當下呼叫 LLM 得到什麼回覆，是執行期產物，不是原始碼或固定資料，
+# 不該進版控（跟 cra_zh_cache.json 不同——那份快取的是條文全文翻譯，
+# 內容固定、任何部署都一樣，才值得共用進版控）。
+core/weakness_name_cache.json
+core/finding_summary_cache.json
+cra_kb/cra_data/cra_remediation_cache.json
+cwe_kb/cwe_data/cwe_remediation_cache.json
+iec_kb/iec_data/iec_remediation_cache.json
