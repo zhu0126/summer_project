@@ -183,6 +183,31 @@ hr {
     padding: 8pt 10pt;
 }
 
+/* ---------- 待複核項目：弱點原因／未合格法規／修補建議欄位框 ---------- */
+.field-box {
+    background: #f4f7fa;
+    border: 0.75pt solid #d8dfe6;
+    border-radius: 3pt;
+    padding: 7pt 10pt;
+    margin: 4pt 0 10pt 0;
+}
+.field-box .field-label {
+    font-size: 8.5pt;
+    text-transform: uppercase;
+    letter-spacing: 0.4pt;
+    color: #5a6b7a;
+    font-weight: 700;
+    margin-bottom: 3pt;
+}
+.field-box .reg-item {
+    font-family: "Noto Sans Mono CJK TC", monospace;
+    color: #24507a;
+    margin-bottom: 2pt;
+}
+.field-box .reg-item:last-child {
+    margin-bottom: 0;
+}
+
 code, pre {
     font-family: "Noto Sans Mono CJK TC", monospace;
     background: #f2f4f7;

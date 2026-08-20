@@ -54,26 +54,38 @@
 {% if review_items %}
 ## 待複核項目（規則未涵蓋，附語意檢索候選建議）
 
-以下項目的修補建議由 AI 生成，不能直接當作正式判讀結果引用，請由人工逐項確認。**
+以下項目沒有對應到既有規則，系統無法自動判定是否違反規範，僅附上語意檢索找到的候選分類/條文供參考，須由人工逐項確認，不能直接引用為正式判讀結果。
 
 {% for item in review_items %}
-弱點
-{{ item.title }}（{{ item.target }}）
-
+{% set summary = item.finding_summary %}
 {% set cwe = item.rag_suggestions.cwe[0] if item.rag_suggestions and item.rag_suggestions.cwe else None %}
-CWE
-{{ (cwe.text_zh or cwe.name) if cwe else "（語意檢索沒有找到相關候選）" }}
-{{ cwe.cwe_id if cwe else "（無）" }}
-
 {% set iec = item.rag_suggestions.iec[0] if item.rag_suggestions and item.rag_suggestions.iec else None %}
-IEC 62443-4-2
-{{ (iec.text_zh or iec.title) if iec else "（語意檢索沒有找到相關候選）" }}
-{{ iec.article_no if iec else "（無）" }}
-
 {% set cra = item.rag_suggestions.cra[0] if item.rag_suggestions and item.rag_suggestions.cra else None %}
-CRA
-{{ (cra.text_zh or cra.text or cra.title) if cra else "（語意檢索沒有找到相關候選）" }}
-{{ cra.article_no if cra else "（無）" }}
+{% set weakness_name = (summary.weakness_name if summary else None) or item.title %}
+{% set weakness_reason = (summary.weakness_reason if summary else None) or ((cwe.text_zh or cwe.name) if cwe else None) or "（語意檢索沒有找到相關候選，無法判斷弱點原因）" %}
+{% set remediation = (summary.remediation if summary else None) or ([iec.text_zh if iec else None, cra.text_zh if cra else None] | select | join("；")) or "（AI 修補建議尚未產生，請人工複核）" %}
+
+### {{ weakness_name }}（{{ item.target }}）
+
+<div class="field-box">
+<div class="field-label">弱點原因</div>
+{{ weakness_reason }}
+</div>
+
+<div class="field-box">
+<div class="field-label">未合格法規</div>
+{% if iec or cra -%}
+{% if iec %}<div class="reg-item">{{ iec.article_no }}</div>{% endif %}
+{% if cra %}<div class="reg-item">{{ cra.article_no }}</div>{% endif %}
+{%- else %}
+（語意檢索沒有找到相關候選）
+{%- endif %}
+</div>
+
+<div class="field-box">
+<div class="field-label">修補建議</div>
+{{ remediation }}
+</div>
 
 {% if item.llm_advice %}
 **AI 研判建議**（模型：{{ item.llm_advice.model }}，僅依據上方候選資料產生）

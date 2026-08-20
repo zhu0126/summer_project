@@ -67,6 +67,7 @@ def merge_findings_and_analysis(findings: list[dict], analysis_results: list[dic
             "cra_reference": analysis.get("cra_reference"),
             "rag_suggestions": analysis.get("rag_suggestions"),
             "llm_advice": analysis.get("llm_advice"),
+            "finding_summary": analysis.get("finding_summary"),
         })
     return sort_by_risk_level(merged)
 
