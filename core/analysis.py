@@ -33,6 +33,17 @@ Claude 產出的卡片內容，供 webapp Compliance 頁待複核卡片使用，
 把 IP、韌體/檔案名稱、URL 等識別特定目標的資訊寫進名稱本身——目標
 資訊由呈現層另外附加在名稱旁邊，不該混進弱點名稱的敘述裡。
 
+matched 項目另外帶 weakness_reason（弱點原因）與 iec_reference
+（IEC 62443-4-2 條號），來源是 keyword_rules.py 的規則表或 _cve_match()，
+都是人工維護、已查證的固定文字，不經過 LLM——理由見 keyword_rules.py
+的說明（規則這條路徑的價值就在於離線可用且輸出穩定）。加上這兩個欄位
+之後，matched 與 needs_review 兩種項目在呈現層可以用同一套「弱點原因／
+未合規法規／修補建議」版面渲染，差別只在資料是查表來的還是檢索來的：
+
+    matched       weakness_reason  / iec_reference + cra_reference / recommendation
+    needs_review  finding_summary.weakness_reason
+                                   / rag_suggestions.iec + .cra    / finding_summary.remediation
+
 三個知識庫的分工：CWE 是弱點分類（這是什麼問題），IEC 62443-4-2 是
 元件層級的技術要求（技術上該具備什麼能力），CRA 是法規義務（法律上
 為什麼非做不可）。62443 的另一部 4-1 規範的是開發流程，跟逐筆掃描
@@ -333,6 +344,12 @@ def _fallback_risk_level(finding: dict) -> str:
 # 編出來的條號。
 _CVE_CRA_REFERENCE = "CRA Annex I Part II(1) — 製造商應識別並記錄產品所含元件與已知弱點（含軟體物料清單 SBOM）"
 
+# 已知弱點在 62443-4-2 這一側對應到「元件能不能被更新」這個能力要求：
+# CVE 的處置手段幾乎都是「更新到已修補版本」，而元件如果根本不具備安全的
+# 更新機制，這個弱點在產品生命週期內就無法收斂。條號與標題查證自
+# iec_kb/iec_data/iec_4_2.json（CR 3.10 Support for updates）。
+_CVE_IEC_REFERENCE = "IEC 62443-4-2 CR 3.10 — Support for updates（元件應具備支援安全更新的能力，使已知弱點能被修補）"
+
 
 def _cve_match(finding: dict) -> dict | None:
     """
@@ -361,8 +378,13 @@ def _cve_match(finding: dict) -> dict | None:
         "title": finding["title"],
         "status": "matched",
         "risk_level": severity,
+        "weakness_reason": (
+            f"掃描比對到此服務對應已公開的弱點編號 {cve_list}，"
+            "代表目前運行的版本存在已被記錄、且攻擊手法多半已公開的安全問題。"
+        ),
         "recommendation": f"已知弱點 {cve_list}，建議儘速更新到已修補版本或套用廠商公告的緩解措施，並確認實際影響範圍。",
         "cra_reference": _CVE_CRA_REFERENCE,
+        "iec_reference": _CVE_IEC_REFERENCE,
     }
 
 

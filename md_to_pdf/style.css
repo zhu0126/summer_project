@@ -204,6 +204,19 @@ hr {
     color: #24507a;
     margin-bottom: 2pt;
 }
+/* 規則表的對照是「編號 — 說明」，說明是中文句子，整行等寬會很難讀，
+   所以只有編號保持等寬強調，說明回到一般字體（見 templates/report.md.j2
+   的 reg_line macro）。RAG 候選只輸出短編號，不會用到這兩個 class，
+   維持原本整行等寬的樣子。 */
+.field-box .reg-item .reg-id {
+    font-family: "Noto Sans Mono CJK TC", monospace;
+    font-weight: 700;
+}
+.field-box .reg-item .reg-desc {
+    /* 不能用 inherit——父層 .reg-item 已經是等寬，會被繼承回來 */
+    font-family: "Noto Sans CJK TC", "Noto Sans CJK SC", "Noto Sans", sans-serif;
+    color: #3c4b5a;
+}
 .field-box .reg-item:last-child {
     margin-bottom: 0;
 }

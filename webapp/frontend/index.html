@@ -479,9 +479,7 @@
   .fail-card .fail-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
   .fail-card .fail-title { font-size: 14px; font-weight: 600; }
   .fail-card .fail-target { font-family: "IBM Plex Mono", monospace; font-size: 11.5px; color: var(--text-faint); margin-bottom: 10px; }
-  .fail-card .fail-block { margin-top: 8px; }
-  .fail-card .fail-block .fail-label { font-size: 11px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 3px; }
-  .fail-card .fail-block .fail-value { font-size: 13px; }
+  .fail-card .fail-body { font-size: 12.5px; }
   .fail-card .evidence-box {
     background: #0B1424; border: 1px solid var(--border); border-radius: 3px; padding: 8px 10px;
     font-family: "IBM Plex Mono", monospace; font-size: 12px; color: #C3D2EF; margin-top: 3px;
@@ -497,17 +495,25 @@
   .review-card .review-title { font-size: 13.5px; }
   .review-card .review-target { font-family: "IBM Plex Mono", monospace; font-size: 11.5px; color: var(--text-faint); }
   .review-card .review-body { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); font-size: 12.5px; }
-  .review-card .candidate-group {
+
+  /* 「弱點原因／未合規法規／修補建議」三段式區塊。不再掛在 .review-card
+     底下，因為不符合項目（規則命中）跟待複核項目（RAG 候選）現在共用同一套
+     版面——兩者的差別在於「怎麼找到對應法規」（查表 vs 語意檢索），不在於
+     使用者該怎麼讀，所以呈現方式統一，樣式也只留一份定義。 */
+  .candidate-group {
     background: #0B1424; border: 1px solid var(--border); border-radius: 3px;
     padding: 8px 10px; margin-bottom: 8px;
   }
-  .review-card .candidate-group .cg-label { font-size: 11px; color: var(--text-dim); text-transform: uppercase; margin-bottom: 4px; text-align: left; }
-  .review-card .candidate-remediation { color: var(--text); margin-bottom: 4px; line-height: 1.5; }
-  .review-card .candidate-item {
+  .candidate-group .cg-label { font-size: 11px; color: var(--text-dim); text-transform: uppercase; margin-bottom: 4px; text-align: left; }
+  .candidate-remediation { color: var(--text); margin-bottom: 4px; line-height: 1.5; }
+  .candidate-item {
     display: flex; align-items: center; flex-wrap: wrap; gap: 6px;
     color: var(--text-dim); margin-bottom: 4px;
   }
-  .review-card .candidate-item .cid { color: var(--accent); font-family: "IBM Plex Mono", monospace; }
+  .candidate-item .cid { color: var(--accent); font-family: "IBM Plex Mono", monospace; flex-shrink: 0; }
+  /* 規則表的法規對照是完整字串（編號 — 標題／說明），比 RAG 候選只有
+     article_no 多了一段描述，這裡讓描述換行時能對齊，不跟編號擠成一行。 */
+  .candidate-item .cid-desc { color: var(--text-dim); line-height: 1.5; }
 
   .adopt-btn {
     margin-left: auto; background: none; border: 1px solid var(--accent-dim); color: var(--accent);
@@ -1143,10 +1149,10 @@ function adoptCandidate(findingId, group, id, buttonEl) {
   }
 }
 
-// 待複核卡片的內容欄位：弱點名稱／弱點原因／未合格法規／修補建議。
+// 待複核卡片的內容欄位：弱點名稱／弱點原因／未合規法規／修補建議。
 // 前三段（名稱、原因、修補建議）由後端 analysis.py 呼叫
 // llm_advisor.derive_finding_summary() 一次讀 CWE/IEC/CRA 三個知識庫的
-// 候選產生（f.finding_summary），「未合格法規」不需要 LLM，直接列出
+// 候選產生（f.finding_summary），「未合規法規」不需要 LLM，直接列出
 // IEC/CRA 候選各自的條號。LLM 這條路徑不可用時 f.finding_summary 會是
 // null，這裡退回用候選本身的欄位組出還算堪用的內容，不讓卡片開天窗。
 function renderRegulationRefs(findingId, iec, cra) {
@@ -1176,6 +1182,28 @@ function renderCandidateBlock(label, valueHtml) {
   </div>`;
 }
 
+// 規則命中項目的法規對照。跟 renderRegulationRefs() 分開的兩個理由：
+// 1. 這裡沒有「採納 / 綁定」按鈕——那個動作的意義是「人工確認這筆語意檢索
+//    候選確實適用」，而規則表本來就是人工維護、已經確認過的對照，沒有東西
+//    需要再確認一次。
+// 2. 規則表存的是完整字串（"IEC 62443-4-2 CR 4.1 — Information confidentiality
+//    （…）"），RAG 候選存的是 article_no + 另外的 text_zh 欄位，資料形狀不同。
+function renderRuleRegulationRefs(refs) {
+  const rows = refs.filter(Boolean);
+  if (rows.length === 0) {
+    return `<div class="empty-note">（規則表未提供對應條文）</div>`;
+  }
+  return rows.map(ref => {
+    const sep = ref.indexOf(" — ");
+    const id = sep === -1 ? ref : ref.slice(0, sep);
+    const desc = sep === -1 ? "" : ref.slice(sep + 3);
+    return `<div class="candidate-item">
+      <span class="cid">${escapeHtml(id)}</span>
+      ${desc ? `<span class="cid-desc">${escapeHtml(desc)}</span>` : ""}
+    </div>`;
+  }).join("");
+}
+
 function renderCompliance(findings, processRequirements) {
   const container = document.getElementById("compliance-content");
   container.innerHTML = "";
@@ -1197,24 +1225,26 @@ function renderCompliance(findings, processRequirements) {
       // 比對用的技術識別字串（例如 "tcp/8000 http (Uvicorn)"）；LLM 路徑不可用
       // 時 f.weakness_name 會是 null，退回顯示原始 title，不讓卡片標題開天窗。
       const weaknessName = f.weakness_name || f.title;
+
+      // 版面跟待複核卡片一致（弱點原因／未合規法規／修補建議），差別只在
+      // 資料來源：這裡三段都來自 core/keyword_rules.py 的規則表或 CVE 比對
+      // 結果（人工維護、已查證），待複核那邊來自語意檢索候選 + LLM 摘要。
+      // weakness_reason 是規則表新增的欄位，舊掃描結果沒有這個欄位時退回
+      // 顯示 recommendation，不讓區塊開天窗。
+      const weaknessReason = f.weakness_reason || f.recommendation || "（規則表未提供弱點原因）";
+      const cardHtml =
+        renderCandidateBlock("弱點原因", `<div class="candidate-remediation">${escapeHtml(weaknessReason)}</div>`) +
+        renderCandidateBlock("未合規法規", renderRuleRegulationRefs([f.iec_reference, f.cra_reference])) +
+        renderCandidateBlock("修補建議", `<div class="candidate-remediation">${escapeHtml(f.recommendation || "（無）")}</div>`) +
+        renderCandidateBlock("證據", `<div class="evidence-box">${escapeHtml(detailLine(f.detail))}</div>`);
+
       card.innerHTML = `
         <div class="fail-head">
           <span class="fail-title">${escapeHtml(weaknessName)}</span>
           ${riskBadge(f.risk_level)}
         </div>
         <div class="fail-target">目標：${escapeHtml(f.target)} ・ 來源：${escapeHtml(SOURCE_LABEL[f.source] || f.source)}</div>
-        <div class="fail-block">
-          <div class="fail-label">對應法規</div>
-          <div class="fail-value">${escapeHtml(f.cra_reference || "（無）")}</div>
-        </div>
-        <div class="fail-block">
-          <div class="fail-label">理由</div>
-          <div class="fail-value">${escapeHtml(f.recommendation || "（無）")}</div>
-        </div>
-        <div class="fail-block">
-          <div class="fail-label">證據</div>
-          <div class="evidence-box">${escapeHtml(detailLine(f.detail))}</div>
-        </div>
+        <div class="fail-body">${cardHtml}</div>
       `;
       failSection.appendChild(card);
     });
@@ -1254,7 +1284,7 @@ function renderCompliance(findings, processRequirements) {
 
       const cardHtml =
         renderCandidateBlock("弱點原因", `<div class="candidate-remediation">${escapeHtml(weaknessReason)}</div>`) +
-        renderCandidateBlock("未合格法規", renderRegulationRefs(f.finding_id, iec, cra)) +
+        renderCandidateBlock("未合規法規", renderRegulationRefs(f.finding_id, iec, cra)) +
         renderCandidateBlock("修補建議", `<div class="candidate-remediation">${escapeHtml(remediation)}</div>`);
 
       const llmHtml = f.llm_advice ? `

@@ -1,3 +1,13 @@
+{#
+  規則表的法規對照存成「編號 — 標題／說明」一整個字串，跟 RAG 候選只有
+  article_no（短編號）不同。整行套等寬字體會讓中文說明的部分很難讀，
+  所以拆成編號（等寬、強調色）＋說明（一般字體）兩段呈現。
+  找不到分隔符號時整行當編號印，不會漏字。
+#}
+{% macro reg_line(ref) -%}
+{%- set parts = ref.split(" — ", 1) -%}
+<div class="reg-item"><span class="reg-id">{{ parts[0] }}</span>{% if parts | length > 1 %} <span class="reg-desc">{{ parts[1] }}</span>{% endif %}</div>
+{%- endmacro %}
 # IoT 安全掃描報告
 
 ## Scan Information
@@ -42,10 +52,25 @@
 
 *目標：{{ item.target }}*
 
-- **建議**：{{ item.recommendation }}
-{% if item.cra_reference %}
-- **對應法規**：{{ item.cra_reference }}
-{% endif %}
+<div class="field-box">
+<div class="field-label">弱點原因</div>
+{{ item.weakness_reason or item.recommendation or "（規則表未提供弱點原因）" }}
+</div>
+
+<div class="field-box">
+<div class="field-label">未合規法規</div>
+{% if item.iec_reference or item.cra_reference -%}
+{% if item.iec_reference %}{{ reg_line(item.iec_reference) }}{% endif %}
+{% if item.cra_reference %}{{ reg_line(item.cra_reference) }}{% endif %}
+{%- else %}
+（規則表未提供對應條文）
+{%- endif %}
+</div>
+
+<div class="field-box">
+<div class="field-label">修補建議</div>
+{{ item.recommendation }}
+</div>
 
 {% endfor %}
 {% else %}
@@ -77,7 +102,7 @@
 </div>
 
 <div class="field-box">
-<div class="field-label">未合格法規</div>
+<div class="field-label">未合規法規</div>
 {% if iec or cra -%}
 {% if iec %}<div class="reg-item">{{ iec.article_no }}</div>{% endif %}
 {% if cra %}<div class="reg-item">{{ cra.article_no }}</div>{% endif %}
