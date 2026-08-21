@@ -65,6 +65,7 @@ def merge_findings_and_analysis(findings: list[dict], analysis_results: list[dic
             "risk_level": analysis.get("risk_level", "info"),
             "weakness_reason": analysis.get("weakness_reason"),
             "recommendation": analysis.get("recommendation"),
+            "recommendation_source": analysis.get("recommendation_source"),
             "cra_reference": analysis.get("cra_reference"),
             "iec_reference": analysis.get("iec_reference"),
             "rag_suggestions": analysis.get("rag_suggestions"),

@@ -1106,7 +1106,7 @@ function renderFindings(allFindings) {
         <div class="finding-detail">
           <div>來源：${escapeHtml(SOURCE_LABEL[f.source] || f.source)}</div>
           <div class="evidence-line">${escapeHtml(detailLine(f.detail))}</div>
-          ${f.recommendation ? `<div style="margin-top:6px;">建議：${escapeHtml(f.recommendation)}</div>` : ""}
+          ${f.recommendation ? `<div style="margin-top:6px;">建議${f.recommendation_source === "llm" ? "（AI 依對應條款生成）" : ""}：${escapeHtml(f.recommendation)}</div>` : ""}
         </div>
       `;
       groupEl.appendChild(row);
@@ -1232,10 +1232,17 @@ function renderCompliance(findings, processRequirements) {
       // weakness_reason 是規則表新增的欄位，舊掃描結果沒有這個欄位時退回
       // 顯示 recommendation，不讓區塊開天窗。
       const weaknessReason = f.weakness_reason || f.recommendation || "（規則表未提供弱點原因）";
+      // 修補建議是這張卡片唯一可能經過 LLM 的欄位（依上方「未合規法規」列出的
+      // 條款生成，見 llm_advisor.derive_rule_remediation()）。標示出來是因為它跟
+      // 同一張卡片上其他兩欄的可信度不同——那兩欄是人工維護的固定文字，這句是
+      // 每次可能不同的模型產物。後端退回規則表原句時 source 會是 "rule"，就不標。
+      const remediationLabel = f.recommendation_source === "llm"
+        ? "修補建議（AI 依上列條款生成）"
+        : "修補建議";
       const cardHtml =
         renderCandidateBlock("弱點原因", `<div class="candidate-remediation">${escapeHtml(weaknessReason)}</div>`) +
         renderCandidateBlock("未合規法規", renderRuleRegulationRefs([f.iec_reference, f.cra_reference])) +
-        renderCandidateBlock("修補建議", `<div class="candidate-remediation">${escapeHtml(f.recommendation || "（無）")}</div>`) +
+        renderCandidateBlock(remediationLabel, `<div class="candidate-remediation">${escapeHtml(f.recommendation || "（無）")}</div>`) +
         renderCandidateBlock("證據", `<div class="evidence-box">${escapeHtml(detailLine(f.detail))}</div>`);
 
       card.innerHTML = `

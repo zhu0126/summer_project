@@ -262,6 +262,113 @@ finally:
     llm_advisor.ask_llm = original_ask
 
 print()
+print("==== llm_advisor：規則命中項目的修補建議 ====")
+
+# 快取檔改指到暫存目錄，測試不能污染 core/rule_remediation_cache.json——
+# 那份快取會被真的掃描讀到，寫進假資料等於讓下一次掃描顯示測試用的假建議。
+import tempfile
+
+_real_cache_path = llm_advisor.RULE_REMEDIATION_CACHE_PATH
+llm_advisor.RULE_REMEDIATION_CACHE_PATH = Path(tempfile.mkdtemp()) / "rule_remediation_cache.json"
+
+RULE_IEC = "IEC 62443-4-2 CR 4.1 — Information confidentiality（元件應具備保護傳輸中資訊機密性的能力）"
+RULE_CRA = "CRA Annex I Part I(2)(e) — 產品應保護儲存、傳輸或處理之資料的機密性"
+
+rule_captured = {}
+
+
+def _fake_rule_ask(system_instruction, prompt):
+    rule_captured["system"] = system_instruction
+    rule_captured["prompt"] = prompt
+    # 括號前留空白、且省略 "CRA " 前綴——模型照 CRA 原文排版寫出來的樣子，
+    # 跟規則表寫法不同但指的是同一條，不該被引用查核退掉。
+    return "停用 Telnet 改用 SSH，以符合 IEC 62443-4-2 CR 4.1 與 Annex I Part I (2)(e) 的要求。"
+
+
+llm_advisor.ask_llm = _fake_rule_ask
+try:
+    fix = llm_advisor.derive_rule_remediation(
+        finding, "Telnet 沒有加密。", "建議停用 Telnet 改用 SSH。", RULE_IEC, RULE_CRA)
+finally:
+    llm_advisor.ask_llm = original_ask
+
+check("條款齊全時產出建議", fix is not None)
+if fix:
+    check("引用寫法不同但同一條不被誤報", "IEC 62443-4-2 CR 4.1" in fix)
+    check("prompt 帶入 IEC 條號", "IEC 62443-4-2 CR 4.1" in rule_captured["prompt"])
+    check("prompt 帶入 CRA 條號", "Annex I Part I(2)(e)" in rule_captured["prompt"])
+    check("prompt 帶入弱點原因", "Telnet 沒有加密" in rule_captured["prompt"])
+    check("prompt 帶入規則表原本的建議", "改用 SSH" in rule_captured["prompt"])
+    # 目標 IP 不進 prompt：修補建議講的是服務怎麼改，寫進哪台機器沒有幫助，
+    # 也避免 IP 被寫進建議文字裡（跟 weakness_name 同一個原則）。
+    check("prompt 不帶目標 IP", "192.168.1.20" not in rule_captured["prompt"])
+    check("system instruction 禁止捏造條號", "NEVER" in rule_captured["system"])
+
+# CRA 條文全文進版控（cra_articles.json），所以這條在任何環境都查得到；
+# IEC 因授權限制不進版控，缺檔時只會少掉全文，不影響流程，故不斷言。
+check("prompt 帶入 CRA 條文全文（知識庫可用時）",
+      "confidentiality of stored" in rule_captured["prompt"]
+      or not (Path(__file__).resolve().parent.parent
+              / "cra_kb" / "cra_data" / "cra_articles.json").is_file())
+
+# 引用查核沒過就整段捨棄——合規報告裡錯的條號比沒有條號更危險，
+# 寧可退回規則表那句比較通則但保證正確的建議。
+#
+# 弱點原因/建議刻意跟上一段不同：cache key 帶了這兩段文字的指紋，用同一組
+# 會直接命中上面那筆快取、根本走不到 ask_llm，測試就變成永遠會過的空殼。
+llm_advisor.ask_llm = lambda s, p: "應停用 Telnet，另依 IEC 62443-4-2 CR 3.9 與 Article 13 辦理。"
+try:
+    bad_fix = llm_advisor.derive_rule_remediation(
+        finding, "Telnet 沒有加密（另一種寫法）。", "建議改用 SSH（另一種寫法）。", RULE_IEC, RULE_CRA)
+finally:
+    llm_advisor.ask_llm = original_ask
+
+check("引用了沒給過的條號時整段捨棄", bad_fix is None)
+check("被捨棄的內容不會寫進快取",
+      "應停用 Telnet" not in llm_advisor.RULE_REMEDIATION_CACHE_PATH.read_text(encoding="utf-8"))
+
+llm_advisor.ask_llm = _must_not_be_called
+try:
+    check("一條都沒列時不呼叫 LLM 且回 None",
+          llm_advisor.derive_rule_remediation(finding, "原因", "建議", None, None) is None)
+    # 第二次同樣輸入應該吃快取，不會再送請求（_must_not_be_called 會炸）
+    check("相同輸入吃快取不重複呼叫",
+          llm_advisor.derive_rule_remediation(
+              finding, "Telnet 沒有加密。", "建議停用 Telnet 改用 SSH。", RULE_IEC, RULE_CRA) == fix)
+finally:
+    llm_advisor.ask_llm = original_ask
+
+llm_advisor.ask_llm = lambda s, p: None
+try:
+    check("LLM 不可用時降級為 None（呼叫端退回規則表原句）",
+          llm_advisor.derive_rule_remediation(
+              finding, "另一個原因", "另一句建議", RULE_IEC, None) is None)
+finally:
+    llm_advisor.ask_llm = original_ask
+    llm_advisor.RULE_REMEDIATION_CACHE_PATH = _real_cache_path
+
+print()
+print("==== keyword_rules：法規對照的條號真的存在 ====")
+
+# 只驗證條號查得到，破折號後面那句中文說明對不對，程式沒辦法自動判斷——
+# 那要人去讀原文（規則表的 docstring 有寫明這個要求）。這裡擋的是打錯字
+# 或引用到根本不存在的條號。
+from core.keyword_rules import KEYWORD_RULES
+from core.analysis import _CVE_CRA_REFERENCE, _CVE_IEC_REFERENCE
+
+_all_refs = [_CVE_CRA_REFERENCE, _CVE_IEC_REFERENCE]
+for _rule in KEYWORD_RULES.values():
+    _all_refs += [_rule["cra_reference"], _rule["iec_reference"]]
+
+for _ref in dict.fromkeys(_all_refs):
+    _no, _desc = llm_advisor._split_reference(_ref)
+    _text = llm_advisor._clause_text(_no)
+    _iec_kb_missing = _no.startswith("IEC") and not (
+        Path(__file__).resolve().parent.parent / "iec_kb" / "iec_data" / "iec_4_2.json").is_file()
+    check(f"{_no} 查得到條文", bool(_text) or _iec_kb_missing)
+    check(f"{_no} 附了中文說明", bool(_desc))
+
+print()
 if failures:
     print(f"{len(failures)} 項未通過：" + "、".join(failures))
     sys.exit(1)

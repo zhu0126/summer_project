@@ -23,6 +23,14 @@ rag_suggestions（iec / cra 候選）對齊語意，差別只在於「怎麼找�
 斷網時卡片會開天窗，而且同一條規則每次掃描可能得到不同措辭。既然規則
 本來就是人工維護的固定對照，原因敘述一起寫死才是一致的做法。
 
+recommendation 這欄的角色則跟上面三欄不同：它是「這個服務該怎麼處理」的
+通則，寫的時候並沒有對著哪一條條文。呈現層實際顯示的修補建議，是由
+llm_advisor.derive_rule_remediation() 拿下面 iec_reference/cra_reference
+列出的那幾條（連同條文全文）重寫成「這幾條各自要求你做什麼」的版本，
+這裡這句退居基準與退路——LLM 不可用、或產出的引用沒通過查核時，顯示的
+就是這句（見 analysis.py 的 _finalize_matched()）。所以這欄仍然要維持
+「單獨拿出來看也成立」的品質，不能寫成只有配上條文才讀得懂的半句話。
+
 法規對照的兩個來源，效力完全不同，不可混為一談：
 - cra_reference：CRA（Regulation (EU) 2024/2847）是具強制力的歐盟法規。
 - iec_reference：IEC 62443-4-2 是自願性標準，除非產業規範或客戶合約
@@ -32,7 +40,11 @@ rag_suggestions（iec / cra 候選）對齊語意，差別只在於「怎麼找�
 
 下面每一條 iec_reference 的條號與標題都是從 iec_kb/iec_data/iec_4_2.json
 （標準原文解析結果）逐條查證過的，不是憑印象寫的。條文全文因授權限制
-不進版控，這裡只引用編號與標題。
+不進版控，這裡只引用編號與標題。cra_reference 同樣逐條核對過
+cra_kb/cra_data/cra_articles.json 的原文，破折號後面那句中文是條文本身的
+翻譯，不是條號的代稱——兩者對不上就是引錯條，這在合規報告裡是最嚴重的
+一種錯誤（讀的人不會每條都回去查 EUR-Lex）。改動任何一條之前請先把
+cra_articles.json 裡該條的原文讀過一次再寫。
 """
 from core.common import SEVERITY_ORDER
 
@@ -43,42 +55,42 @@ KEYWORD_RULES: dict[str, dict] = {
         "risk_level": "high",
         "weakness_reason": "Telnet 協定本身沒有任何加密機制，登入時的帳號密碼與後續所有指令、輸出都以明碼在網路上傳輸，同網段的攻擊者只要被動監聽即可取得管理權限。",
         "recommendation": "Telnet 以明碼傳輸帳號密碼與所有流量，建議停用並改用 SSH。",
-        "cra_reference": "CRA Annex I Part I(2)(a) — 產品應以預設方式確保適當等級的機密性保護",
+        "cra_reference": "CRA Annex I Part I(2)(e) — 產品應保護儲存、傳輸或處理之資料的機密性，例如以當代技術對傳輸中或靜態的資料加密",
         "iec_reference": "IEC 62443-4-2 CR 4.1 — Information confidentiality（元件應具備保護傳輸中資訊機密性的能力）",
     },
     "ftp": {
         "risk_level": "high",
         "weakness_reason": "FTP 的控制通道與資料通道都未加密，帳號密碼及傳輸的檔案內容以明碼送出，可被網路上的第三方攔截或竄改。",
         "recommendation": "FTP 以明碼傳輸憑證與檔案內容，建議停用並改用 SFTP/FTPS。",
-        "cra_reference": "CRA Annex I Part I(2)(a) — 產品應以預設方式確保適當等級的機密性保護",
+        "cra_reference": "CRA Annex I Part I(2)(e) — 產品應保護儲存、傳輸或處理之資料的機密性，例如以當代技術對傳輸中或靜態的資料加密",
         "iec_reference": "IEC 62443-4-2 CR 4.1 — Information confidentiality（元件應具備保護傳輸中資訊機密性的能力）",
     },
     "http": {
         "risk_level": "medium",
         "weakness_reason": "服務以未加密的 HTTP 提供，連線內容（含登入憑證、Session Cookie 與傳輸的資料）不具機密性與完整性保護，容易遭中間人攔截或竄改。",
         "recommendation": "服務僅提供未加密的 HTTP，建議強制導向 HTTPS 並停用明碼連線。",
-        "cra_reference": "CRA Annex I Part I(2)(a) — 產品應以預設方式確保適當等級的機密性保護",
+        "cra_reference": "CRA Annex I Part I(2)(e) — 產品應保護儲存、傳輸或處理之資料的機密性，例如以當代技術對傳輸中或靜態的資料加密",
         "iec_reference": "IEC 62443-4-2 CR 4.1 — Information confidentiality（元件應具備保護傳輸中資訊機密性的能力）",
     },
     "snmp": {
         "risk_level": "medium",
         "weakness_reason": "SNMP v1/v2c 僅以 community string 作為驗證，且多數裝置沿用出廠預設值（public/private），等同於未更換的預設密碼；此協定亦以明碼傳輸，可被讀取甚至寫入裝置設定。",
         "recommendation": "SNMP（尤其 v1/v2c）常使用預設 community string，建議停用或改用 SNMPv3。",
-        "cra_reference": "CRA Annex I Part I(2)(c) — 產品應僅處理執行預期用途所必要的資料",
+        "cra_reference": "CRA Annex I Part I(2)(b) — 產品上市時應具備安全的預設組態（secure by default）",
         "iec_reference": "IEC 62443-4-2 CR 1.5 — Authenticator management（元件應能辨識安裝時預設驗證資訊是否已被變更，並保護驗證資訊不被未授權揭露）",
     },
     "rtsp": {
         "risk_level": "medium",
         "weakness_reason": "RTSP 串流服務在許多裝置上預設不啟用驗證，任何能連到此連接埠的人都可直接取得即時影音串流，造成未經授權的監看。",
         "recommendation": "RTSP 串流服務常見未驗證即可存取，建議確認存取控制與驗證機制已啟用。",
-        "cra_reference": "CRA Annex I Part I(2)(e) — 產品應保護儲存、傳輸或處理資料的機密性",
+        "cra_reference": "CRA Annex I Part I(2)(d) — 產品應以適當的控制機制（含身分驗證、身分或存取管理）防止未經授權的存取",
         "iec_reference": "IEC 62443-4-2 CR 1.1 — Human user identification and authentication（元件應在所有可供人員存取的介面上強制識別與驗證使用者）",
     },
     "upnp": {
         "risk_level": "low",
         "weakness_reason": "UPnP 允許區網內的裝置自行要求路由器開通對外連接埠，等於繞過防火牆的人工審核；若非必要功能而仍對外開放，會擴大裝置的攻擊面。",
         "recommendation": "UPnP 對外開放可能被用於自動穿透防火牆，建議評估是否有必要對外暴露。",
-        "cra_reference": "CRA Annex I Part I(1) — 產品應以適當等級的網路安全性設計、開發及生產",
+        "cra_reference": "CRA Annex I Part I(2)(j) — 產品的設計、開發與生產應限縮攻擊面，包含對外介面",
         "iec_reference": "IEC 62443-4-2 CR 7.7 — Least functionality（元件應具備限制不必要的功能、連接埠、協定與服務的能力）",
     },
 }

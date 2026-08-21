@@ -68,7 +68,7 @@
 </div>
 
 <div class="field-box">
-<div class="field-label">修補建議</div>
+<div class="field-label">修補建議{% if item.recommendation_source == "llm" %}（AI 依上列條款生成）{% endif %}</div>
 {{ item.recommendation }}
 </div>
 

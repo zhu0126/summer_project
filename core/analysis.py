@@ -44,6 +44,15 @@ matched 項目另外帶 weakness_reason（弱點原因）與 iec_reference
     needs_review  finding_summary.weakness_reason
                                    / rag_suggestions.iec + .cra    / finding_summary.remediation
 
+matched 的第三欄（修補建議）是這三欄裡唯一會經過 LLM 的：規則表寫死的
+recommendation 是「這個服務該怎麼處理」的通則，並沒有對著哪一條條文寫，
+但卡片上就列著那兩條要求，讀的人會想知道各自要求他做到什麼。因此改由
+llm_advisor.derive_rule_remediation() 拿卡片上列出的那幾條（連同本地知識庫
+裡的條文全文）生成，並在產出後跑引用查核，只要出現沒給過的條號就整段
+捨棄、退回規則表原句——見 _finalize_matched()。前兩欄仍然完全不碰 LLM，
+所以 LLM 不可用時卡片只是修補建議退回通則版，不會開天窗。這個轉換的
+來源記在 recommendation_source（"llm"／"rule"），呈現層據此標示。
+
 三個知識庫的分工：CWE 是弱點分類（這是什麼問題），IEC 62443-4-2 是
 元件層級的技術要求（技術上該具備什麼能力），CRA 是法規義務（法律上
 為什麼非做不可）。62443 的另一部 4-1 規範的是開發流程，跟逐筆掃描
@@ -98,6 +107,7 @@ try:
     from core.llm_advisor import derive_iec_remediation
     from core.llm_advisor import derive_finding_summary
     from core.llm_advisor import derive_weakness_name
+    from core.llm_advisor import derive_rule_remediation
 except ImportError:
     llm_advise_finding = None
     derive_cra_remediation = None
@@ -105,6 +115,7 @@ except ImportError:
     derive_iec_remediation = None
     derive_finding_summary = None
     derive_weakness_name = None
+    derive_rule_remediation = None
     print("[analysis] 警告：llm_advisor 無法匯入，LLM 研判建議停用")
 
 # 每個知識庫只取信心最高的 1 筆——不做信心分數過濾（實測證明單一門檻
@@ -313,6 +324,56 @@ def _weakness_name(finding: dict, recommendation: str | None, cra_reference: str
         return None
 
 
+def _rule_remediation(finding: dict, result: dict) -> str | None:
+    """
+    matched 項目的修補建議，依卡片上「未合規法規」實際列出的那幾條產生
+    （見 llm_advisor.derive_rule_remediation()）。跟 _weakness_name() 一樣
+    預設就會跑。任何失敗都回 None，呼叫端退回規則表／CVE 判定原本寫死的
+    recommendation。
+    """
+    if derive_rule_remediation is None:
+        return None
+    try:
+        return derive_rule_remediation(
+            finding,
+            result.get("weakness_reason"),
+            result.get("recommendation"),
+            result.get("iec_reference"),
+            result.get("cra_reference"),
+        )
+    except Exception as e:
+        print(f"[analysis] 規則修補建議產生失敗，略過（{e}）")
+        return None
+
+
+def _finalize_matched(finding: dict, result: dict) -> dict:
+    """
+    兩條 matched 路徑（規則比對／CVE 比對）共用的收尾：補上卡片標題用的
+    弱點名稱，並把修補建議換成依「未合規法規」列出的條款生成的版本。
+
+    recommendation_source 記錄這句話最後是誰寫的（"llm"／"rule"），讓呈現層
+    可以標示出來。這個欄位不是裝飾——規則表那句是人工維護、每次掃描都一樣的
+    固定文字，LLM 生成的那句則是每次可能不同、且依賴外部服務的產物，兩者
+    可信度不同，讀報告的人有權知道自己看的是哪一種。
+
+    weakness_name 一律拿「規則表原本的 recommendation」去生，不是換過的那句：
+    弱點名稱要的是穩定（同一種弱點跨掃描應該叫同一個名字），拿一段每次
+    都可能不同的文字當輸入會讓名稱跟著漂。
+    """
+    llm_remediation = _rule_remediation(finding, result)
+    return {
+        **result,
+        "recommendation": llm_remediation or result.get("recommendation"),
+        "recommendation_source": "llm" if llm_remediation else "rule",
+        "cwe_id": None,
+        "confidence": None,
+        "rag_suggestions": None,
+        "llm_advice": None,
+        "weakness_name": _weakness_name(
+            finding, result.get("recommendation"), result.get("cra_reference")),
+    }
+
+
 def _fallback_risk_level(finding: dict) -> str:
     """
     規則沒比對到、也沒有比對到已知 CVE 時（見 _cve_match()），needs_review
@@ -409,17 +470,11 @@ def analyze_finding(finding: dict, use_llm: bool = False) -> dict:
     """
     rule_result = rule_analyze_finding(finding)
     if rule_result["status"] == "matched":
-        return {**rule_result, "cwe_id": None, "confidence": None,
-                "rag_suggestions": None, "llm_advice": None,
-                "weakness_name": _weakness_name(
-                    finding, rule_result["recommendation"], rule_result["cra_reference"])}
+        return _finalize_matched(finding, rule_result)
 
     cve_result = _cve_match(finding)
     if cve_result is not None:
-        return {**cve_result, "cwe_id": None, "confidence": None,
-                "rag_suggestions": None, "llm_advice": None,
-                "weakness_name": _weakness_name(
-                    finding, cve_result["recommendation"], cve_result["cra_reference"])}
+        return _finalize_matched(finding, cve_result)
 
     suggestions = {
         "cwe": _cwe_candidates(finding),
@@ -434,6 +489,7 @@ def analyze_finding(finding: dict, use_llm: bool = False) -> dict:
         "status": "needs_review",
         "risk_level": _fallback_risk_level(finding),
         "recommendation": None,
+        "recommendation_source": None,
         "cra_reference": None,
         "cwe_id": None,
         "confidence": None,

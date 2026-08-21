@@ -27,6 +27,7 @@ RAG 的最後一段：把檢索到的 CWE / IEC 62443 / CRA 候選 + finding 本
 或 API 呼叫失敗，一律回傳 None 並印警告，讓分析流程照常跑完——
 跟 CWE/CRA 知識庫連不上時的降級方式一致。
 """
+import hashlib
 import json
 import os
 import re
@@ -586,6 +587,221 @@ def derive_weakness_name(finding: dict, recommendation: str | None, cra_referenc
     result = answer.strip()
     cache[cache_key] = result
     _save_weakness_name_cache(cache)
+    return result
+
+
+# 不符合項目（matched）卡片的「修補建議」，依卡片上「未合規法規」實際列出的
+# 那幾條（IEC 62443-4-2 + CRA）生成。
+#
+# 跟規則表原本寫死的 recommendation 的分工：規則表那句是「這個服務該怎麼處理」
+# 的通則（例如「Telnet 以明碼傳輸帳密，建議停用並改用 SSH」），寫的時候並沒有
+# 特別對著哪一條條文；卡片上卻列著兩條具體要求，讀的人自然會問「那這兩條各自
+# 要我做到什麼」。這個函式做的就是這一步轉換——把條文要求落到這筆 finding 上。
+#
+# 三個防線，缺一不可（跟本檔案開頭列的三個設計限制同一套邏輯）：
+# 1. 只餵卡片上列出的那兩條，不做語意檢索、不讓模型自由發揮要引用什麼。
+# 2. 條文全文優先從本地知識庫撈（見 _clause_text()），撈不到才退回只給
+#    編號與規則表寫的中文說明——有全文時模型講得出「要求的能力是什麼」，
+#    沒有時至少不會因為缺資料就編。
+# 3. 產出後一律跑 verify_citations()，只要出現卡片上沒有的編號就整段作廢、
+#    退回規則表原本那句。合規報告裡錯的條號比沒有條號更危險，寧可退回
+#    一句比較通則但保證正確的建議。
+RULE_REMEDIATION_CACHE_PATH = Path(__file__).resolve().parent / "rule_remediation_cache.json"
+
+RULE_REMEDIATION_SYSTEM_INSTRUCTION = """You are helping a product security engineer act on ONE scan finding that has already been confirmed non-compliant by a fixed, human-maintained rule (not by semantic search — the match is certain).
+
+You are given: (1) the finding, (2) why it is a weakness, (3) the exact clauses listed as non-compliant on this report card — an IEC 62443-4-2 component requirement and/or a CRA article, with their official text where available, and (4) the rule table's existing generic remediation note.
+
+Your job: write the remediation text for this card, derived from what those specific clauses require, applied to this specific finding.
+
+Rules:
+1. Write 1 to 3 sentences in Traditional Chinese as used in Taiwan (zh-TW), at most 150 characters total. Use Traditional Chinese characters ONLY — never output Simplified Chinese characters (write 弱點 not 弱点, 將 not 将, 驗證 not 验证).
+2. Cite the clause identifiers you were given, reproducing each one EXACTLY as written, including the standard prefix (write "IEC 62443-4-2 CR 4.1", never "CR 4.1"). If both an IEC clause and a CRA article are given, refer to both; if only one is given, refer to only that one.
+3. NEVER write any clause number, article number, CWE ID, or requirement identifier that was not given to you below — not even one you are confident about. This is the single most important rule.
+4. Say what to actually do, concretely, for THIS finding — for example which protocol to disable and what to use instead, which setting to change, what to verify afterwards. Do not merely restate or translate the legal/standard text, and do not repeat the finding's title verbatim.
+5. The clauses differ in force: the CRA is binding EU law, IEC 62443-4-2 is a voluntary standard. Do not write that the product "violates" or "fails" IEC 62443; phrase IEC content as the capability the component is expected to provide.
+6. Output the remediation text only — no markdown, no bullet points, no headings, no labels, no preamble, no trailing commentary."""
+
+# 條文全文的本地來源。IEC 的解析結果因授權限制不進版控（見 .gitignore），
+# 所以在別台機器上這個檔案很可能不存在——撈不到就只用編號與規則表的中文
+# 說明，不能因此讓修補建議產不出來。
+_CLAUSE_TEXT_KB_PATHS = (
+    Path(__file__).resolve().parent.parent / "iec_kb" / "iec_data" / "iec_4_2.json",
+    Path(__file__).resolve().parent.parent / "cra_kb" / "cra_data" / "cra_articles.json",
+)
+
+_clause_text_index: dict[str, str] | None = None
+
+
+def _clause_key(article_no: str) -> str:
+    """
+    條號的比對用鍵值。三種正規化都是必要的，少一種就查不到：
+    - \\xa0 → 空白：CRA 原文的 "Part I" 中間是 non-breaking space（EUR-Lex 排版
+      產生的），規則表裡寫的是一般空白。
+    - 去掉括號前的空白：知識庫寫 "Annex I Part I (2)(a)"，規則表寫
+      "Annex I Part I(2)(a)"。
+    - 去掉開頭的 "CRA "：規則表為了讓讀者一眼看出這是哪部法規而加了前綴，
+      知識庫的 article_no 沒有。
+    """
+    s = article_no.replace("\xa0", " ").strip().lower()
+    s = re.sub(r"^cra\s+", "", s)
+    s = re.sub(r"\s*\(", "(", s)
+    return re.sub(r"\s+", " ", s)
+
+
+def _load_clause_text_index() -> dict[str, str]:
+    """條號 → 條文全文的對照表，第一次呼叫時載入後留在記憶體重複使用。"""
+    global _clause_text_index
+    if _clause_text_index is not None:
+        return _clause_text_index
+
+    index: dict[str, str] = {}
+    for path in _CLAUSE_TEXT_KB_PATHS:
+        if not path.is_file():
+            continue
+        try:
+            entries = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as e:
+            print(f"[llm_advisor] 警告：條文全文載入失敗，該來源略過（{path.name}：{e}）")
+            continue
+        for entry in entries if isinstance(entries, list) else []:
+            article_no = (entry.get("article_no") or "").strip()
+            text = (entry.get("text") or "").strip()
+            if article_no and text:
+                index[_clause_key(article_no)] = text
+
+    _clause_text_index = index
+    return index
+
+
+def _split_reference(ref: str | None) -> tuple[str, str]:
+    """把規則表的「編號 — 說明」拆成兩段；沒有分隔符時整串當編號。"""
+    if not ref:
+        return "", ""
+    head, sep, tail = ref.partition(" — ")
+    return head.strip(), tail.strip() if sep else ""
+
+
+def _clause_text(article_no: str) -> str:
+    """條文全文，查不到回空字串（呼叫端只給編號與中文說明就好）。"""
+    if not article_no:
+        return ""
+    text = _load_clause_text_index().get(_clause_key(article_no), "")
+    if len(text) > CRA_REMEDIATION_INPUT_MAX_CHARS:
+        text = text[:CRA_REMEDIATION_INPUT_MAX_CHARS].rstrip() + "……"
+    return text
+
+
+def _clause_block(heading: str, ref: str | None) -> tuple[str, str]:
+    """回傳 (prompt 區塊, 這條的編號)；ref 是 None 時區塊註明未提供。"""
+    article_no, desc = _split_reference(ref)
+    if not article_no:
+        return f"# {heading}\n(not listed on this card)\n", ""
+
+    text = _clause_text(article_no)
+    body = f"{article_no}"
+    if desc:
+        body += f"\n（報告上的中文說明：{desc}）"
+    if text:
+        body += f"\n\nOfficial text:\n{text}"
+    else:
+        body += "\n\n(full text not available in the local knowledge base — rely on the identifier and the Chinese note above)"
+    return f"# {heading}\n{body}\n", article_no
+
+
+def _squash_paren_space(text: str) -> str:
+    """
+    引用查核前把括號前的空白吃掉，理由同 _clause_key()：規則表寫
+    "Annex I Part I(2)(a)"，模型多半會照 CRA 原文的排版寫成
+    "Annex I Part I (2)(a)"。這是同一個編號的兩種寫法，不是幻覺，
+    不先對齊會把正確引用誤報成錯誤、白白把好答案退掉。
+    """
+    return re.sub(r"\s*\(", "(", text or "")
+
+
+def _load_rule_remediation_cache() -> dict:
+    return _load_json_cache(RULE_REMEDIATION_CACHE_PATH)
+
+
+def _save_rule_remediation_cache(cache: dict) -> None:
+    _save_json_cache(RULE_REMEDIATION_CACHE_PATH, cache)
+
+
+def derive_rule_remediation(
+    finding: dict,
+    weakness_reason: str | None,
+    recommendation: str | None,
+    iec_reference: str | None,
+    cra_reference: str | None,
+) -> str | None:
+    """
+    把「已判定不符合的 finding」+「卡片上列出的未合規條款」交給 Claude，
+    產出依那幾條條文寫出來的修補建議。
+
+    回傳 None 代表這條路徑不可用（沒金鑰／沒套件／呼叫失敗／回覆引用了
+    沒給過的條號），呼叫端必須退回規則表原本寫死的 recommendation——
+    修補建議欄位不能開天窗，也不能顯示引用查核沒過的內容。
+    """
+    iec_block, iec_id = _clause_block("Listed IEC 62443-4-2 requirement", iec_reference)
+    cra_block, cra_id = _clause_block("Listed CRA requirement", cra_reference)
+
+    # 一條都沒列時不送請求：這個函式的全部價值就是「依這幾條寫建議」，
+    # 沒有條款可依據就只是多花一次 API 呼叫去換一句沒有出處的話。
+    if not iec_id and not cra_id:
+        return None
+
+    cache = _load_rule_remediation_cache()
+    # cache key 除了 finding 特徵與兩個條號，還帶規則表那兩段文字的指紋——
+    # 條號沒變但 weakness_reason/recommendation 被改寫時（規則表是人工維護的，
+    # 本來就會修），舊的建議是照舊文字生的，不該繼續沿用。
+    basis_digest = hashlib.sha1(
+        f"{weakness_reason or ''}|{recommendation or ''}".encode("utf-8")
+    ).hexdigest()[:8]
+    cache_key = f"{iec_id}|{cra_id}|{basis_digest}::{_finding_signature(finding)}"
+    if cache_key in cache:
+        return cache[cache_key]
+
+    detail = finding.get("detail") or {}
+    detail_lines = "\n".join(
+        f"- {k}: {v}" for k, v in detail.items() if v not in (None, "", [], {})
+    )
+
+    # 跟 derive_weakness_name() 一樣不放 Target：修補建議講的是「這個服務
+    # 該怎麼改」，寫進哪台機器的 IP 對讀者沒有幫助，目標資訊由呈現層另外
+    # 附在卡片上。
+    prompt = f"""# Scan Finding (already confirmed non-compliant)
+
+- Title: {finding.get('title', '')}
+- Category: {finding.get('category', '')} (source tool: {finding.get('source', '')})
+{detail_lines}
+
+# Why this is a weakness
+{weakness_reason or "(not provided)"}
+
+{iec_block}
+{cra_block}
+# Rule table's existing generic remediation note (for grounding; rewrite it against the clauses above, do not simply copy it)
+{recommendation or "(none)"}
+"""
+    answer = ask_llm(RULE_REMEDIATION_SYSTEM_INSTRUCTION, prompt)
+    if answer is None:
+        return None
+
+    result = answer.strip()
+
+    # 白名單用 _clause_key() 正規化（去 "CRA " 前綴、去括號前空白、\xa0 → 空白）：
+    # 規則表寫 "CRA Annex I Part I(2)(a)"，那個 "CRA " 是為了讓讀者一眼看出是
+    # 哪部法規才加的，不是條號的一部分，模型照 CRA 原文寫成
+    # "Annex I Part I (2)(a)" 完全正確——不對齊就會把正確引用整段退掉。
+    allowed_ids = [_clause_key(i) for i in (iec_id, cra_id) if i]
+    unsupported = verify_citations(_squash_paren_space(result.replace("\xa0", " ")), allowed_ids)
+    if unsupported:
+        print("[llm_advisor] 警告：規則修補建議引用了卡片上沒有的條號，"
+              f"整段捨棄改用規則表原句（{'、'.join(unsupported)}）")
+        return None
+
+    cache[cache_key] = result
+    _save_rule_remediation_cache(cache)
     return result
 
 
