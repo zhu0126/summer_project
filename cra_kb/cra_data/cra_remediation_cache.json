@@ -1,9 +1,2 @@
 {
-  "Annex III Class I 2.::webapp|zap|Content Security Policy (CSP) Header Not Set": "建議檢查該網頁是否應受限制外部資源載入，如應該設定 Content-Security-Policy 標頭以減低 XSS 攻擊風險。",
-  "Annex IV (1)::webapp|zap|Weak Authentication Method": "確認此網站是否已改用HTTPS加密連線並搭配強化驗證機制（如OAuth 2.0或多因素驗證），以保護在網路傳輸過程中的認證憑證。",
-  "Annex III Class I 2.::webapp|zap|HTTP Only Site": "應確保此HTTP服務升級為HTTPS加密連線，以符合軟體傳輸過程中的加密保護要求。",
-  "Annex I Part I (2)(g)::firmware|binwalk|LZMA compressed data, properties: 0x5D, dictionary size: 33554432 bytes, uncompressed size: 5959006 bytes": "建議確認此韌體映像檔中的LZMA壓縮資料是否包含不必要的個人或其他敏感資訊，並評估是否應移除不相關的資料以符合最小化原則。",
-  "Annex III Class I 7.::firmware|binwalk|MySQL ISAM index file Version 7": "確認該韌體內含的 MySQL ISAM 索引檔案是否為產品必要元件，若非必要應予移除或替換為安全的替代方案。",
-  "Annex III Class I 8.::firmware|binwalk|JBOOT STAG header, image id: 5, timestamp 0x860CB153, image size: 99486104 bytes, image JBOOT checksum: 0x4000, header JBOOT checksum: 0x995B": "建議確認此韌體是否具備安全啟動機制以驗證 JBOOT 開機管理程式的完整性與簽章，防止未授權的韌體修改。",
-  "Annex III Class I 10.::network|nmap|tcp/22 ssh (OpenSSH 10.3p1 Debian 5)": "建議確認此 SSH 服務是否已限制存取範圍或應用網路隔離控制，以符合網路介面安全要求。"
 }
