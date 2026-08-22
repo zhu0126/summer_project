@@ -1157,21 +1157,28 @@ function adoptCandidate(findingId, group, id, buttonEl) {
 // null，這裡退回用候選本身的欄位組出還算堪用的內容，不讓卡片開天窗。
 function renderRegulationRefs(findingId, iec, cra) {
   const rows = [];
-  if (iec && iec.article_no) rows.push([iec.article_no, "iec"]);
-  if (cra && cra.article_no) rows.push([cra.article_no, "cra"]);
+  // desc 取候選的 title（條文標題/內容），跟 renderRuleRegulationRefs() 從規則表
+  // 字串切出來的那段是同一種東西——這裡不用 text_zh，因為那是 LLM 生成的
+  // 一句話行動建議（已經顯示在「修補建議」欄位），不是條文本身的內容。
+  if (iec && iec.article_no) rows.push([iec.article_no, "iec", iec.title || ""]);
+  if (cra && cra.article_no) rows.push([cra.article_no, "cra", cra.title || ""]);
 
   if (rows.length === 0) {
     return `<div class="empty-note">語意檢索沒有找到相關候選</div>`;
   }
 
-  return rows.map(([id, group]) => {
+  return rows.map(([id, group, desc]) => {
     const adopted = findingId && isCandidateAdopted(findingId, group, id);
     const adoptControl = findingId
       ? (adopted
           ? `<span class="candidate-confirmed">✓ 已確認</span>`
           : `<button type="button" class="adopt-btn" data-finding="${escapeHtml(findingId)}" data-group="${escapeHtml(group)}" data-id="${escapeHtml(id)}">採納 / 綁定</button>`)
       : "";
-    return `<div class="candidate-item"><span class="cid">${escapeHtml(id)}</span>${adoptControl}</div>`;
+    return `<div class="candidate-item">
+      <span class="cid">${escapeHtml(id)}</span>
+      ${desc ? `<span class="cid-desc">${escapeHtml(desc)}</span>` : ""}
+      ${adoptControl}
+    </div>`;
   }).join("");
 }
 
